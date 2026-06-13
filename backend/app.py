@@ -119,33 +119,66 @@ TRANSITION_PHRASES = [
 ]
 
 # --- Buzzwords + clearer suggested alternatives -----------------------------
-BUZZWORDS = {
+# Deliberately limited to topic-independent filler — empty corporate jargon and
+# vague praise that reads as fluff in any presentation. Context-dependent
+# technical terms (leverage, robust, scalable, ecosystem, bandwidth, seamless,
+# paradigm, actionable, mission-critical, best practice) are intentionally
+# absent: they're precise, legitimate vocabulary in many fields, so flagging
+# them produced false positives on technical talks. Buzzwords are advisory only
+# and do NOT affect the language score (see analyze_buzzwords / compute_scores).
+#
+# The list lives in an external JSON file (BUZZWORDS_FILE, default
+# backend/buzzwords.json) so it can be tuned without code changes — edit the
+# file and restart. The dict below is the built-in fallback used when that file
+# is missing or unreadable, keeping the feature working offline / out-of-the-box.
+_DEFAULT_BUZZWORDS = {
     "synergy": "cooperation / working together",
-    "leverage": "use",
-    "paradigm": "model / pattern",
     "disrupt": "change / improve",
     "disruptive": "game-changing — say what specifically",
-    "ecosystem": "network / environment",
     "holistic": "complete / whole",
-    "bandwidth": "time / capacity",
-    "scalable": "able to grow",
-    "robust": "reliable / strong",
-    "seamless": "smooth",
     "low-hanging fruit": "easy wins",
     "circle back": "follow up",
     "move the needle": "make a measurable difference",
     "deep dive": "detailed look",
     "value-add": "benefit",
-    "best practice": "proven method",
     "cutting-edge": "newest",
     "game-changer": "major improvement",
     "think outside the box": "be creative",
     "core competency": "main strength",
-    "actionable": "practical",
-    "mission-critical": "essential",
     "innovative": "new — describe how",
     "world-class": "excellent — give evidence",
 }
+
+BUZZWORDS_FILE = os.environ.get(
+    "BUZZWORDS_FILE", os.path.join(os.path.dirname(__file__), "buzzwords.json")
+)
+
+
+def _load_buzzwords() -> dict:
+    """Load buzzword -> alternative pairs from BUZZWORDS_FILE.
+
+    Read once at startup. Falls back to the built-in defaults if the file is
+    missing or malformed, so a bad edit can never take the feature down. Keys are
+    lowercased to match the case-insensitive transcript scan in analyze_buzzwords.
+    """
+    try:
+        with open(BUZZWORDS_FILE, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except FileNotFoundError:
+        return dict(_DEFAULT_BUZZWORDS)
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"[buzzwords] could not read {BUZZWORDS_FILE}: {exc}; using defaults")
+        return dict(_DEFAULT_BUZZWORDS)
+    if not isinstance(data, dict) or not all(
+        isinstance(k, str) and isinstance(v, str) for k, v in data.items()
+    ):
+        print(f"[buzzwords] {BUZZWORDS_FILE} must be a JSON object of "
+              "string->string; using defaults")
+        return dict(_DEFAULT_BUZZWORDS)
+    return {k.lower(): v for k, v in data.items()}
+
+
+BUZZWORDS = _load_buzzwords()
 
 # --- Stopwords for keyword/repetition analysis ------------------------------
 STOPWORDS = {
@@ -703,16 +736,57 @@ def analyze_buzzwords(text: str) -> dict:
     density = total / word_count * 100
     overused = {b: c for b, c in found.items() if c >= 3}
 
-    score = _clamp(100 - density * 20 - len(overused) * 5)
-
+    # Advisory only — no score. Buzzwords surface plainer-wording tips but do not
+    # feed the language grade: even the curated filler above is occasionally used
+    # deliberately, so penalizing it would punish fair usage. compute_scores
+    # leaves this out of language_score on purpose.
     return {
         "available": True,
+        "advisory": True,
         "total": total,
         "density_per_100w": _round(density, 2),
         "by_word": dict(found.most_common()),
         "overused": overused,
         "suggestions": suggestions,
-        "score": _round(score, 1),
+    }
+
+
+def _apply_buzzword_review(bz: dict, review: dict | None) -> dict:
+    """Drop buzzwords the content LLM judged appropriate in context.
+
+    `review` maps each flagged word -> True (used as precise, legitimate
+    vocabulary here — suppress it) or False (genuine filler — keep flagging).
+    Only the content call produces it; with no review (LLM unavailable) the
+    deterministic flags are returned unchanged, so the feature stays offline-safe.
+    """
+    if not review:
+        return bz
+    by_word = dict(bz.get("by_word") or {})
+    suggestions = dict(bz.get("suggestions") or {})
+    overused = dict(bz.get("overused") or {})
+    suppressed = {}
+    for word in list(by_word):
+        if review.get(word) is True:
+            suppressed[word] = by_word.pop(word)
+            suggestions.pop(word, None)
+            overused.pop(word, None)
+    if not suppressed:
+        return {**bz, "reviewed": True}
+    old_total = bz.get("total") or 0
+    new_total = sum(by_word.values())
+    old_density = bz.get("density_per_100w") or 0
+    # density = total / word_count * 100, so scaling by the surviving-total ratio
+    # gives the exact new density without re-tokenizing.
+    new_density = _round(old_density * new_total / old_total, 2) if old_total else 0
+    return {
+        **bz,
+        "by_word": by_word,
+        "suggestions": suggestions,
+        "overused": overused,
+        "suppressed": suppressed,
+        "total": new_total,
+        "density_per_100w": new_density,
+        "reviewed": True,
     }
 
 
@@ -787,14 +861,17 @@ def analyze_rhythm(words: list, text: str) -> dict:
 CONTENT_CATEGORIES = ["introduction", "thesis", "evidence", "organization", "conclusion"]
 
 
-def analyze_content(text: str, transitions: dict) -> dict:
+def analyze_content(text: str, transitions: dict,
+                    flagged_buzzwords: list | None = None) -> dict:
     """Evaluate intro, thesis, evidence, organization, conclusion.
 
     Uses the local LLM (Ollama/Llama 3.1) and falls back to a transparent
     heuristic if Ollama isn't reachable, so the app stays fully functional.
+    `flagged_buzzwords` (if any) are vetted in the same call — see
+    _content_via_llm — and the verdict is returned under "buzzword_review".
     """
     try:
-        return _content_via_llm(text)
+        return _content_via_llm(text, flagged_buzzwords)
     except Exception as exc:  # fall back, but surface why
         result = _content_heuristic(text, transitions)
         result["llm_error"] = str(exc)
@@ -802,23 +879,40 @@ def analyze_content(text: str, transitions: dict) -> dict:
         return result
 
 
-def _content_via_llm(text: str) -> dict:
+def _content_via_llm(text: str, flagged_buzzwords: list | None = None) -> dict:
     import urllib.request
 
-    schema_hint = (
-        "Return ONLY valid JSON with no markdown: {\"categories\": {"
+    schema = (
+        "{\"categories\": {"
         "\"introduction\": {\"score\": 0-100, \"feedback\": str}, "
         "\"thesis\": {...}, \"evidence\": {...}, \"organization\": {...}, "
-        "\"conclusion\": {...}}, \"summary\": str}"
+        "\"conclusion\": {...}}, \"summary\": str"
     )
-    prompt = (
+    instructions = (
         "You are an expert presentation coach. Evaluate this presentation "
         "transcript on five dimensions: introduction (clear opening, context "
         "& purpose), thesis (central message/goal clearly stated), evidence "
         "(examples/data/explanations supporting claims), organization "
         "(logical structure, coherent connections), and conclusion (summarizes "
         "key points, reinforces message). Give each a 0-100 score and concise, "
-        "actionable feedback.\n\n" + schema_hint + "\n\nTRANSCRIPT:\n" + text[:12000]
+        "actionable feedback."
+    )
+    # Fold an optional buzzword context-check into the SAME call (no extra
+    # latency): decide which flagged terms are precise, legitimate vocabulary in
+    # THIS talk vs empty filler, so the deterministic matcher's false positives
+    # (e.g. "robust" in a stats talk) can be suppressed downstream.
+    words = sorted({w for w in (flagged_buzzwords or []) if w})
+    if words:
+        instructions += (
+            "\n\nAlso review these flagged words: " + json.dumps(words) +
+            ". For each, decide whether it is used as precise, legitimate "
+            "vocabulary in this transcript (true) or as vague filler (false)."
+        )
+        schema += ", \"buzzword_review\": {\"<word>\": true|false}"
+    schema += "}"
+    prompt = (
+        instructions + "\n\nReturn ONLY valid JSON with no markdown: " +
+        schema + "\n\nTRANSCRIPT:\n" + text[:12000]
     )
     # Call the local Ollama server directly over its native HTTP API. format=json
     # makes Ollama return guaranteed-valid JSON, so no fence-stripping is needed.
@@ -840,7 +934,7 @@ def _content_via_llm(text: str) -> dict:
     cats = data.get("categories", {})
     scores = [cats.get(c, {}).get("score", 0) for c in CONTENT_CATEGORIES]
     overall = statistics.mean([s for s in scores if isinstance(s, (int, float))] or [0])
-    return {
+    result = {
         "available": True,
         "method": "llm",
         "model": LLM_MODEL,
@@ -848,6 +942,11 @@ def _content_via_llm(text: str) -> dict:
         "summary": data.get("summary", ""),
         "score": _round(overall, 1),
     }
+    review = data.get("buzzword_review")
+    if words and isinstance(review, dict):
+        # Normalize to {lowercased word: bool} for _apply_buzzword_review.
+        result["buzzword_review"] = {str(k).lower(): bool(v) for k, v in review.items()}
+    return result
 
 
 def _content_heuristic(text: str, transitions: dict) -> dict:
@@ -954,9 +1053,10 @@ def compute_scores(delivery, language, content) -> dict:
         delivery["pauses"].get("score"),
         delivery["fillers"].get("score"),
     ])
+    # Buzzwords are intentionally excluded — they're advisory only (too
+    # context-dependent to grade fairly). See analyze_buzzwords / BUZZWORDS.
     language_score = _avg_available([
         language["transitions"].get("score"),
-        language["buzzwords"].get("score"),
         language["repetition"].get("score"),
     ])
     content_score = content.get("score")
@@ -1094,17 +1194,23 @@ def run_analysis(audio_path: str) -> dict:
     }
 
     transitions = analyze_transitions(text)
+
+    # Buzzwords are flagged deterministically, then handed to the content LLM
+    # call, which vets them for context; its verdict feeds back to suppress
+    # false positives. One round trip, no extra latency.
+    buzzwords = analyze_buzzwords(text)
+    content = analyze_content(text, transitions, list((buzzwords.get("by_word") or {}).keys()))
+    if content.get("llm_error"):
+        warnings.append(f"LLM content analysis failed: {content['llm_error']}")
+    buzzwords = _apply_buzzword_review(buzzwords, content.pop("buzzword_review", None))
+
     language = {
         "transitions": transitions,
-        "buzzwords": analyze_buzzwords(text),
+        "buzzwords": buzzwords,
         "repetition": analyze_repetition(text, words),
         "keywords": extract_keywords(text),
         "rhythm": analyze_rhythm(words, text),
     }
-
-    content = analyze_content(text, transitions)
-    if content.get("llm_error"):
-        warnings.append(f"LLM content analysis failed: {content['llm_error']}")
 
     scores = compute_scores(delivery, language, content)
     feedback = build_feedback(scores, delivery, language, content)
