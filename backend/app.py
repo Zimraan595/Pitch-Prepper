@@ -65,6 +65,9 @@ WHISPERX_BATCH_SIZE = int(os.environ.get("WHISPERX_BATCH_SIZE", "16"))
 # analysis falls back to a built-in heuristic.
 LLM_MODEL = os.environ.get("LLM_MODEL", "llama3.1")
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+# Fixed seed + temperature 0 (see analyze_content) make the LLM's content
+# scores reproducible for the same transcript. Override LLM_SEED if desired.
+LLM_SEED = int(os.environ.get("LLM_SEED", "42"))
 
 # --- User accounts, sessions & leaderboard (MongoDB) -----------------------
 # Login sessions are signed with this key — set a real SECRET_KEY in production.
@@ -916,12 +919,15 @@ def _content_via_llm(text: str, flagged_buzzwords: list | None = None) -> dict:
     )
     # Call the local Ollama server directly over its native HTTP API. format=json
     # makes Ollama return guaranteed-valid JSON, so no fence-stripping is needed.
+    # temperature 0 + a fixed seed make the model decode greedily, so the same
+    # transcript yields the same scores/feedback on repeated runs (as close to
+    # deterministic as the local runtime allows).
     payload = json.dumps({
         "model": LLM_MODEL,
         "messages": [{"role": "user", "content": prompt}],
         "stream": False,
         "format": "json",
-        "options": {"temperature": 0.3},
+        "options": {"temperature": 0, "top_p": 1, "seed": LLM_SEED},
     }).encode("utf-8")
     req = urllib.request.Request(
         OLLAMA_HOST.rstrip("/") + "/api/chat",
