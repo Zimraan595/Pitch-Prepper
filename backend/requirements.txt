@@ -1,0 +1,19 @@
+# Core web framework
+Flask>=3.0
+
+# Speech-to-text with word-level timestamps
+openai-whisper>=20231117
+
+# Audio feature analysis (pitch, RMS volume, silence/pause detection)
+librosa>=0.10
+numpy>=1.24
+soundfile>=0.12
+
+# LLM-based content/structure analysis (optional — set OPENAI_API_KEY to enable)
+openai>=1.0
+
+# NOTE:
+# - openai-whisper requires PyTorch (installed automatically as a dependency)
+#   and the `ffmpeg` system binary must be available on PATH.
+# - If OPENAI_API_KEY is not set, content analysis falls back to a built-in
+#   heuristic so the app still runs fully offline.
