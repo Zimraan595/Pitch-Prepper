@@ -29,6 +29,7 @@ import os
 import re
 import json
 import math
+import time
 import shutil
 import datetime
 import threading
@@ -83,6 +84,10 @@ LLM_SEED = int(os.environ.get("LLM_SEED", "42"))
 # --- User accounts, sessions & leaderboard (MongoDB) -----------------------
 # Login sessions are signed with this key — set a real SECRET_KEY in production.
 app.secret_key = os.environ.get("SECRET_KEY", "dev-insecure-change-me")
+# Keep users logged in across browser restarts (sessions are marked permanent on
+# login/register). Default 30 days; override with SESSION_DAYS.
+SESSION_DAYS = int(os.environ.get("SESSION_DAYS", "30"))
+app.permanent_session_lifetime = datetime.timedelta(days=SESSION_DAYS)
 MONGO_URI = os.environ.get("MONGO_URI", "mongodb://localhost:27017")
 MONGO_DB_NAME = os.environ.get("MONGO_DB_NAME", "presentation_helper")
 DB_UNAVAILABLE_MSG = (
@@ -117,9 +122,18 @@ WINDOW_SECONDS = 15  # bucket size for timeline metrics
 # --- Filler words -----------------------------------------------------------
 # Multi-word fillers are checked first so "you know" isn't double counted.
 FILLER_PHRASES = ["you know", "i mean", "sort of", "kind of"]
-FILLER_WORDS = {
-    "um", "uh", "uhm", "er", "ah", "hmm", "like", "basically",
-    "actually", "literally", "so", "right", "okay", "well", "yeah",
+
+# "Hard" fillers are almost always disfluencies regardless of position, so they
+# are counted wherever they appear.
+FILLER_WORDS_HARD = {"um", "uh", "uhm", "er", "erm", "ah", "hmm", "mm", "mhm"}
+
+# Discourse markers double as ordinary words ("the results are SO good", "tools
+# LIKE this"), so counting every occurrence over-penalizes normal speech. They
+# read as filler mainly in the sentence-/clause-initial position ("So, ...",
+# "Well, ...", "Basically, ..."), so analyze_fillers only counts them there.
+FILLER_DISCOURSE = {
+    "like", "basically", "actually", "literally", "so",
+    "right", "okay", "well", "yeah",
 }
 
 # --- Transition phrases (signal logical flow) -------------------------------
@@ -595,17 +609,36 @@ def analyze_volume(y, sr, np) -> dict:
 # Module 2d — Pause analysis (timestamps + silence detection)
 # ---------------------------------------------------------------------------
 
+# Pronoun forms that are always capitalized mid-sentence, so a capitalized next
+# word here is NOT a reliable "new sentence" signal.
+_ALWAYS_CAP = {"i", "i'm", "i've", "i'll", "i'd"}
+
+
+def _looks_like_sentence_break(prev_word: str, next_word: str) -> bool:
+    """Heuristic: did a sentence/clause likely end between these two words?
+
+    WhisperX word tokens frequently drop punctuation, so checking only for a
+    trailing '.', '!' or '?' misses most real breaks (which is why "strategic"
+    pauses almost never registered). As a fallback we use the fact that the model
+    still capitalizes the first word of a new sentence: a capitalized next word
+    (other than the pronoun "I") usually starts one.
+    """
+    if prev_word.rstrip().endswith((".", "!", "?")):
+        return True
+    nxt = next_word.strip()
+    return bool(nxt[:1].isupper() and nxt.lower() not in _ALWAYS_CAP)
+
+
 def analyze_pauses(words: list, duration: float, y, sr, np) -> dict:
     if not words:
         return {"available": False, "reason": "No timed words available."}
 
-    SENTENCE_END = (".", "!", "?")
     pauses = []
     for prev, nxt in zip(words, words[1:]):
         gap = nxt["start"] - prev["end"]
         if gap < 0.25:  # ignore micro-gaps
             continue
-        after_sentence = prev["word"].rstrip().endswith(SENTENCE_END)
+        after_sentence = _looks_like_sentence_break(prev["word"], nxt["word"])
         if gap >= 2.5:
             kind = "long_awkward"
         elif after_sentence and 0.5 <= gap <= 1.8:
@@ -673,11 +706,21 @@ def analyze_fillers(words: list, text: str, duration: float) -> dict:
             t = _nearest_word_time(words, m.start(), text)
             found.append({"word": phrase, "t": t})
 
-    # Single-word fillers from timestamped tokens.
+    # Hard fillers (um, uh, …): count anywhere, from timestamped tokens so the
+    # timestamps are exact.
     for w in words:
         token = re.sub(r"[^a-z']", "", w["word"].lower())
-        if token in FILLER_WORDS:
+        if token in FILLER_WORDS_HARD:
             found.append({"word": token, "t": _round(w["start"], 2)})
+
+    # Discourse markers (so, well, like, …): count only when sentence-/clause-
+    # initial — i.e. at the very start of the transcript or right after sentence
+    # punctuation — so ordinary mid-sentence usage isn't penalized.
+    for marker in FILLER_DISCOURSE:
+        pattern = r"(?:^|[.!?]['\"\)\]]?\s+)(" + re.escape(marker) + r")\b"
+        for m in re.finditer(pattern, lowered):
+            t = _nearest_word_time(words, m.start(1), text)
+            found.append({"word": marker, "t": t})
 
     counts = Counter(f["word"] for f in found)
     per_min = len(found) / (duration / 60.0) if duration > 0 else 0.0
@@ -1289,21 +1332,34 @@ def get_db():
     return db
 
 
+# Cache the ping result briefly so /health and /api/me (hit on every page load)
+# don't pay a network round trip — or, when the DB is down, a multi-second
+# timeout — on every single request.
+_DB_STATUS_TTL = 5.0  # seconds
+_db_status = {"ok": False, "checked_at": 0.0}
+
+
 def db_available() -> bool:
-    """True only if MongoDB actually responds to a ping.
+    """True only if MongoDB actually responds to a ping (cached for a few seconds).
 
     Never raises — any failure (no pymongo, bad URI, server unreachable, auth
     error) is reported as simply "not available" so callers like /health stay
     200 instead of 500.
     """
+    now = time.monotonic()
+    if now - _db_status["checked_at"] < _DB_STATUS_TTL:
+        return _db_status["ok"]
+    ok = False
     try:
         db = get_db()
-        if db is None:
-            return False
-        db.client.admin.command("ping")
-        return True
+        if db is not None:
+            db.client.admin.command("ping")
+            ok = True
     except Exception:
-        return False
+        ok = False
+    _db_status["ok"] = ok
+    _db_status["checked_at"] = now
+    return ok
 
 
 def current_user():
@@ -1437,6 +1493,7 @@ def api_register():
         return jsonify({"error": "That username or email is already taken."}), 409
     except Exception as exc:
         return jsonify({"error": f"Database error: {exc}"}), 503
+    session.permanent = True
     session["user_id"] = str(res.inserted_id)
     doc["_id"] = res.inserted_id
     return jsonify({"user": _public_user(doc)}), 201
@@ -1458,6 +1515,7 @@ def api_login():
     from werkzeug.security import check_password_hash
     if not user or not check_password_hash(user.get("password_hash", ""), password):
         return jsonify({"error": "Invalid username or password."}), 401
+    session.permanent = True
     session["user_id"] = str(user["_id"])
     return jsonify({"user": _public_user(user)})
 
