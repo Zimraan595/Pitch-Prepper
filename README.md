@@ -7,7 +7,8 @@ charts.
 ## Features
 
 **Speech processing**
-- Whisper speech-to-text with word-level timestamps; full transcript stored for analysis.
+- WhisperX speech-to-text with forced-alignment word-level timestamps (falls back
+  to openai-whisper); full transcript stored for analysis.
 
 **Delivery quality**
 - **Speaking rate** — Words Per Minute, too-fast/too-slow sections, vs. recommended range.
@@ -33,7 +34,7 @@ charts.
 
 ## Tech stack
 
-Flask (single-file backend `app.py`) · Whisper · Librosa · OpenAI API · HTML/CSS/JS · Chart.js
+Flask (single-file backend `app.py`) · WhisperX · Librosa · OpenAI API · HTML/CSS/JS · Chart.js
 
 ## Setup
 
@@ -44,7 +45,12 @@ pip install -r requirements.txt        # needs the ffmpeg system binary on PATH
 # optional: richer LLM content analysis
 export OPENAI_API_KEY=sk-...
 export OPENAI_MODEL=gpt-4o-mini        # optional, default shown
-export WHISPER_MODEL=base              # tiny|base|small|medium|large
+
+# transcription (WhisperX by default)
+export TRANSCRIBE_BACKEND=whisperx     # whisperx | whisper
+export WHISPER_MODEL=base              # tiny|base|small|medium|large-v2|large-v3
+export WHISPERX_DEVICE=auto            # auto|cpu|cuda
+export WHISPERX_COMPUTE_TYPE=int8      # e.g. int8 (CPU) | float16 (GPU)
 
 python app.py                          # http://localhost:5000
 ```
