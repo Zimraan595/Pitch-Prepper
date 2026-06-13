@@ -190,10 +190,12 @@
       </div>`;
     const right = `
       <div>
-        <h3>Buzzwords flagged</h3>
+        <h3>Buzzwords flagged <span class="muted" style="font-weight:400;font-size:.8em">(advisory — doesn't affect your score)</span></h3>
         <div>${pills(bz.by_word)}</div>
         ${Object.keys(bz.suggestions || {}).length ? `<p class="muted" style="margin-top:.5rem">Try: ` +
           Object.entries(bz.suggestions).map(([b, a]) => `<b>${esc(b)}</b> → ${esc(a)}`).join("; ") + "</p>" : ""}
+        ${Object.keys(bz.suppressed || {}).length ? `<p class="muted" style="margin-top:.35rem;font-size:.85em">Not flagged — used appropriately in context: ` +
+          Object.keys(bz.suppressed).map((w) => esc(w)).join(", ") + "</p>" : ""}
         <h3 style="margin-top:1rem">Repeated words / phrases</h3>
         <div>${pills(Object.assign({}, rp.repeated_words, rp.repeated_phrases))}</div>
       </div>`;
