@@ -43,6 +43,17 @@ from flask import Flask, request, jsonify, render_template, session
 # Configuration
 # ---------------------------------------------------------------------------
 
+# Load environment variables from a local .env file (e.g. MONGO_URI, SECRET_KEY)
+# if one exists next to this file. This makes config work the same whether the
+# app is launched from a shell `export`, an IDE "Run" button, or a double-click —
+# all of which otherwise see different environments. Optional: if python-dotenv
+# isn't installed, real environment variables are still used.
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
+except ImportError:
+    pass
+
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 200 * 1024 * 1024  # 200 MB upload cap
 

@@ -17,7 +17,12 @@ soundfile>=0.12
 # User accounts & leaderboard storage (MongoDB). Requires a running MongoDB
 # server; set MONGO_URI (default mongodb://localhost:27017). Optional — the app
 # runs without it, just without sign-in/leaderboard.
-pymongo>=4.6
+# The [srv] extra pulls in dnspython, needed for MongoDB Atlas mongodb+srv:// URLs.
+pymongo[srv]>=4.6
+
+# Loads config (MONGO_URI, SECRET_KEY, …) from a local backend/.env file so the
+# app works the same whether launched from a shell, an IDE Run button, etc.
+python-dotenv>=1.0
 
 # LLM-based content/structure analysis runs on a LOCAL model via Ollama.
 # Install Ollama (https://ollama.com) and run: `ollama pull llama3.1`.
