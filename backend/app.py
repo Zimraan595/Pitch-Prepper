@@ -29,6 +29,7 @@ import os
 import re
 import json
 import math
+import shutil
 import threading
 import tempfile
 import statistics
@@ -66,6 +67,18 @@ OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 ALLOWED_EXTENSIONS = {
     "wav", "mp3", "m4a", "mp4", "ogg", "flac", "webm", "aac", "opus",
 }
+
+# Whisper/WhisperX (and librosa for some formats) decode audio by invoking the
+# `ffmpeg` binary as a subprocess. If it isn't on PATH the failure is an opaque
+# FileNotFoundError ("[WinError 2] The system cannot find the file specified" on
+# Windows), so we detect it up front and return this actionable message instead.
+FFMPEG_MISSING_MSG = (
+    "ffmpeg was not found on PATH. Whisper needs the ffmpeg binary to decode "
+    "audio, so transcription can't start without it. Install ffmpeg "
+    "(Windows: `winget install Gyan.FFmpeg`; macOS: `brew install ffmpeg`; "
+    "Debian/Ubuntu: `sudo apt install ffmpeg`), then restart this server from a "
+    "NEW terminal so it picks up the updated PATH."
+)
 
 # --- Speaking-rate reference (words per minute) ----------------------------
 WPM_IDEAL_LOW = 120
@@ -1045,6 +1058,11 @@ def _impact_weight(msg: str) -> int:
 def run_analysis(audio_path: str) -> dict:
     warnings = []
 
+    # Fail fast with a clear message if ffmpeg is missing, rather than letting
+    # the subprocess raise an opaque FileNotFoundError mid-transcription.
+    if shutil.which("ffmpeg") is None:
+        return {"error": FFMPEG_MISSING_MSG}
+
     tx = transcribe(audio_path)
     text, words, duration = tx["text"], tx["words"], tx["duration"]
     if not text:
@@ -1135,6 +1153,8 @@ def analyze():
         return jsonify(result), status
     except RuntimeError as exc:  # missing Whisper, etc.
         return jsonify({"error": str(exc)}), 503
+    except FileNotFoundError:  # ffmpeg (or another required binary) not on PATH
+        return jsonify({"error": FFMPEG_MISSING_MSG}), 503
     except Exception as exc:  # pragma: no cover
         return jsonify({"error": f"Analysis failed: {exc}"}), 500
     finally:
