@@ -1421,10 +1421,16 @@ def api_register():
     from pymongo.errors import DuplicateKeyError
     doc = {
         "username": username,
-        "email": email or None,
         "password_hash": generate_password_hash(password),
         "created_at": datetime.datetime.now(datetime.timezone.utc),
     }
+    # Only store email when provided. Storing an explicit null would collide on
+    # the unique (sparse) email index for every email-less account after the
+    # first — a sparse index still indexes present-but-null fields. Omitting the
+    # field keeps it out of the index, so unlimited accounts without an email
+    # work while real emails stay unique.
+    if email:
+        doc["email"] = email
     try:
         res = db.users.insert_one(doc)
     except DuplicateKeyError:
