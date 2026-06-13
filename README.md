@@ -176,6 +176,29 @@ with specific feedback on how to raise it.
 
 ---
 
+## 🏆 Accounts & leaderboard (optional)
+
+Sign in to track your progress and compete on a **global leaderboard**.
+
+- **Sign up / log in** from the top-right of the page (username + password; email optional).
+- While logged in, **every analysis you run is automatically recorded**, and the
+  leaderboard ranks each user by their **best overall score**.
+- Logins use signed session cookies; passwords are stored **hashed** (never in plain text).
+
+This feature needs **MongoDB**. The rest of the app works fine without it — if
+MongoDB isn't reachable, the sign-in buttons simply report it's unavailable.
+
+```powershell
+# Easiest: run MongoDB in Docker
+docker run -d -p 27017:27017 --name mongo mongo:7
+```
+
+Or install MongoDB Community Server from [mongodb.com](https://www.mongodb.com/try/download/community),
+or point `MONGO_URI` at a free MongoDB Atlas cluster. Then set a real `SECRET_KEY`
+(see Configuration) and restart the app.
+
+---
+
 ## ⚙️ Configuration (optional)
 
 Everything works out of the box, but you can tune behavior with environment
@@ -190,6 +213,9 @@ variables. In PowerShell, set one with `$env:NAME = "value"` before `python app.
 | `WHISPERX_COMPUTE_TYPE` | auto | e.g. `int8` (CPU) or `float16` (GPU). |
 | `LLM_MODEL` | `llama3.1` | Which Ollama model to use for content analysis. |
 | `OLLAMA_HOST` | `http://localhost:11434` | Where Ollama is listening. |
+| `MONGO_URI` | `mongodb://localhost:27017` | MongoDB connection for accounts & leaderboard. |
+| `MONGO_DB_NAME` | `presentation_helper` | Database name to use. |
+| `SECRET_KEY` | `dev-insecure-change-me` | Signs login session cookies — **set a real value in production.** |
 | `PORT` | `5000` | Port the web app runs on. |
 
 **Tip:** on a CPU-only machine, `WHISPER_MODEL=tiny` or `small` makes analysis
@@ -215,8 +241,17 @@ unavailable, that analyzer is skipped with a warning rather than crashing the re
 | Method | Route       | Description                                  |
 |--------|-------------|----------------------------------------------|
 | GET    | `/`         | Dashboard UI                                 |
-| GET    | `/health`   | Status + which models are configured         |
-| POST   | `/analyze`  | `multipart/form-data` field `audio` → results JSON |
+| GET    | `/health`   | Status + which models/services are configured (incl. `db_available`) |
+| POST   | `/analyze`  | `multipart/form-data` field `audio` → results JSON (records to leaderboard if logged in) |
+| POST   | `/api/register` | `{username, email?, password}` → create account + log in |
+| POST   | `/api/login`    | `{username, password}` → start a session |
+| POST   | `/api/logout`   | End the session |
+| GET    | `/api/me`       | Current user + whether MongoDB is reachable |
+| GET    | `/api/leaderboard` | Global ranking of each user's best score |
+
+Accounts & leaderboard are backed by **MongoDB** (`pymongo`), in a self-contained
+module (`get_db`, `current_user`, `_record_result`, and the `/api/*` routes) — and,
+like the analysis features, degrade gracefully when the database is unavailable.
 
 **Future extensions (placeholders by design).** Silero VAD, LanguageTool
 grammar/readability, Hugging Face sentiment/confidence, and webcam-based

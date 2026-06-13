@@ -30,12 +30,14 @@ import re
 import json
 import math
 import shutil
+import datetime
 import threading
 import tempfile
 import statistics
+from functools import wraps
 from collections import Counter
 
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, jsonify, render_template, session
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -63,6 +65,17 @@ WHISPERX_BATCH_SIZE = int(os.environ.get("WHISPERX_BATCH_SIZE", "16"))
 # analysis falls back to a built-in heuristic.
 LLM_MODEL = os.environ.get("LLM_MODEL", "llama3.1")
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+
+# --- User accounts, sessions & leaderboard (MongoDB) -----------------------
+# Login sessions are signed with this key — set a real SECRET_KEY in production.
+app.secret_key = os.environ.get("SECRET_KEY", "dev-insecure-change-me")
+MONGO_URI = os.environ.get("MONGO_URI", "mongodb://localhost:27017")
+MONGO_DB_NAME = os.environ.get("MONGO_DB_NAME", "presentation_helper")
+DB_UNAVAILABLE_MSG = (
+    "User accounts are unavailable — the app can't reach MongoDB. Make sure "
+    "MongoDB is running and MONGO_URI is correct (default mongodb://localhost:27017), "
+    "and that `pymongo` is installed. Core analysis still works without it."
+)
 
 ALLOWED_EXTENSIONS = {
     "wav", "mp3", "m4a", "mp4", "ogg", "flac", "webm", "aac", "opus",
@@ -1111,6 +1124,127 @@ def run_analysis(audio_path: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Module 6 — User accounts, sessions & leaderboard (MongoDB)
+# ---------------------------------------------------------------------------
+#
+# Optional, like the other heavy features. If pymongo isn't installed or the
+# MongoDB server isn't reachable, the account/leaderboard endpoints return a
+# clear "unavailable" message and the core analysis flow keeps working.
+
+_mongo_lock = threading.Lock()
+_mongo_client = None
+_mongo_indexes_ready = False
+USERNAME_RE = re.compile(r"^[A-Za-z0-9_.\-]{3,30}$")
+
+
+def get_db():
+    """Return the MongoDB database handle, or None if unavailable."""
+    global _mongo_client, _mongo_indexes_ready
+    try:
+        from pymongo import MongoClient, ASCENDING, DESCENDING
+    except Exception:
+        # pymongo not installed, or a broken install — treat DB as unavailable.
+        return None
+    if _mongo_client is None:
+        with _mongo_lock:
+            if _mongo_client is None:
+                _mongo_client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=2500)
+    db = _mongo_client[MONGO_DB_NAME]
+    if not _mongo_indexes_ready:
+        try:
+            db.users.create_index([("username", ASCENDING)], unique=True)
+            db.users.create_index([("email", ASCENDING)], unique=True, sparse=True)
+            db.results.create_index([("user_id", ASCENDING)])
+            db.results.create_index([("overall_score", DESCENDING)])
+            _mongo_indexes_ready = True
+        except Exception:
+            pass  # server unreachable right now — retry on a later call
+    return db
+
+
+def db_available() -> bool:
+    """True only if MongoDB actually responds to a ping."""
+    db = get_db()
+    if db is None:
+        return False
+    try:
+        db.client.admin.command("ping")
+        return True
+    except Exception:
+        return False
+
+
+def current_user():
+    """Return the logged-in user document, or None."""
+    uid = session.get("user_id")
+    if not uid:
+        return None
+    db = get_db()
+    if db is None:
+        return None
+    try:
+        from bson import ObjectId
+        return db.users.find_one({"_id": ObjectId(uid)})
+    except Exception:
+        return None
+
+
+def _public_user(user):
+    if not user:
+        return None
+    return {
+        "id": str(user["_id"]),
+        "username": user.get("username"),
+        "email": user.get("email"),
+    }
+
+
+def login_required(fn):
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        if not session.get("user_id"):
+            return jsonify({"error": "You must be logged in."}), 401
+        return fn(*args, **kwargs)
+    return wrapper
+
+
+def _record_result(result: dict):
+    """Persist a completed analysis to the leaderboard for the logged-in user.
+
+    Returns the saved overall score, or None if not saved (anonymous user,
+    DB unavailable, or no score).
+    """
+    user = current_user()
+    if not user:
+        return None
+    db = get_db()
+    if db is None:
+        return None
+    scores = result.get("scores") or {}
+    overall = scores.get("overall")
+    if overall is None:
+        return None
+    rate = (result.get("delivery") or {}).get("rate") or {}
+    doc = {
+        "user_id": str(user["_id"]),
+        "username": user.get("username"),
+        "overall_score": overall,
+        "delivery_score": scores.get("delivery"),
+        "language_score": scores.get("language"),
+        "content_score": scores.get("content"),
+        "wpm": rate.get("wpm"),
+        "duration_sec": result.get("duration_sec"),
+        "word_count": result.get("word_count"),
+        "created_at": datetime.datetime.utcnow(),
+    }
+    try:
+        db.results.insert_one(doc)
+        return overall
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Flask routes
 # ---------------------------------------------------------------------------
 
@@ -1131,7 +1265,110 @@ def health():
         # ffmpeg is required to decode audio; this tells you if the running
         # server process can actually find it on PATH.
         "ffmpeg_found": bool(shutil.which("ffmpeg")),
+        "db_available": db_available(),
     })
+
+
+# --- Accounts & leaderboard -------------------------------------------------
+
+@app.route("/api/register", methods=["POST"])
+def api_register():
+    db = get_db()
+    if db is None:
+        return jsonify({"error": DB_UNAVAILABLE_MSG}), 503
+    data = request.get_json(silent=True) or {}
+    username = (data.get("username") or "").strip()
+    email = (data.get("email") or "").strip().lower()
+    password = data.get("password") or ""
+    if not USERNAME_RE.match(username):
+        return jsonify({"error": "Username must be 3-30 characters: letters, numbers, . _ -"}), 400
+    if len(password) < 6:
+        return jsonify({"error": "Password must be at least 6 characters."}), 400
+
+    from werkzeug.security import generate_password_hash
+    from pymongo.errors import DuplicateKeyError
+    doc = {
+        "username": username,
+        "email": email or None,
+        "password_hash": generate_password_hash(password),
+        "created_at": datetime.datetime.utcnow(),
+    }
+    try:
+        res = db.users.insert_one(doc)
+    except DuplicateKeyError:
+        return jsonify({"error": "That username or email is already taken."}), 409
+    except Exception as exc:
+        return jsonify({"error": f"Database error: {exc}"}), 503
+    session["user_id"] = str(res.inserted_id)
+    doc["_id"] = res.inserted_id
+    return jsonify({"user": _public_user(doc)}), 201
+
+
+@app.route("/api/login", methods=["POST"])
+def api_login():
+    db = get_db()
+    if db is None:
+        return jsonify({"error": DB_UNAVAILABLE_MSG}), 503
+    data = request.get_json(silent=True) or {}
+    username = (data.get("username") or "").strip()
+    password = data.get("password") or ""
+    try:
+        user = db.users.find_one({"username": username})
+    except Exception as exc:
+        return jsonify({"error": f"Database error: {exc}"}), 503
+
+    from werkzeug.security import check_password_hash
+    if not user or not check_password_hash(user.get("password_hash", ""), password):
+        return jsonify({"error": "Invalid username or password."}), 401
+    session["user_id"] = str(user["_id"])
+    return jsonify({"user": _public_user(user)})
+
+
+@app.route("/api/logout", methods=["POST"])
+def api_logout():
+    session.pop("user_id", None)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/me")
+def api_me():
+    return jsonify({
+        "user": _public_user(current_user()),
+        "db_available": db_available(),
+    })
+
+
+@app.route("/api/leaderboard")
+def api_leaderboard():
+    """Global leaderboard: each user's best score, ranked high to low."""
+    db = get_db()
+    if db is None:
+        return jsonify({"error": DB_UNAVAILABLE_MSG, "leaderboard": []}), 200
+    try:
+        pipeline = [
+            {"$group": {
+                "_id": "$user_id",
+                "username": {"$first": "$username"},
+                "best_score": {"$max": "$overall_score"},
+                "attempts": {"$sum": 1},
+                "last_at": {"$max": "$created_at"},
+            }},
+            {"$sort": {"best_score": -1, "last_at": 1}},
+            {"$limit": 100},
+        ]
+        rows = list(db.results.aggregate(pipeline))
+    except Exception as exc:
+        return jsonify({"error": f"Database error: {exc}", "leaderboard": []}), 200
+
+    me = session.get("user_id")
+    leaderboard = [{
+        "rank": i + 1,
+        "username": r.get("username"),
+        "best_score": _round(r.get("best_score"), 1),
+        "attempts": r.get("attempts"),
+        "is_me": r.get("_id") == me,
+    } for i, r in enumerate(rows)]
+    return jsonify({"leaderboard": leaderboard})
 
 
 @app.route("/analyze", methods=["POST"])
@@ -1152,6 +1389,10 @@ def analyze():
         f.save(tmp.name)
         tmp.close()
         result = run_analysis(tmp.name)
+        if "error" not in result:
+            # Logged-in users automatically get their score on the leaderboard.
+            saved = _record_result(result)
+            result["saved_to_leaderboard"] = saved is not None
         status = 200 if "error" not in result else 422
         return jsonify(result), status
     except RuntimeError as exc:  # missing Whisper, etc.
