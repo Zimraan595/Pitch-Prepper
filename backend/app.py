@@ -58,8 +58,11 @@ WHISPERX_COMPUTE_TYPE = os.environ.get("WHISPERX_COMPUTE_TYPE", "")
 WHISPERX_BATCH_SIZE = int(os.environ.get("WHISPERX_BATCH_SIZE", "16"))
 
 # LLM content analysis (optional).
-OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+# Defaults to a local Ollama server running Llama 3.1.
+# To use OpenAI instead: LLM_BASE_URL=https://api.openai.com/v1, LLM_API_KEY=sk-..., LLM_MODEL=gpt-4o-mini
+LLM_MODEL = os.environ.get("LLM_MODEL", "llama3.1")
+LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "http://localhost:11434/v1")
+LLM_API_KEY = os.environ.get("LLM_API_KEY", "ollama")  # Ollama ignores this value
 
 ALLOWED_EXTENSIONS = {
     "wav", "mp3", "m4a", "mp4", "ogg", "flac", "webm", "aac", "opus",
@@ -714,10 +717,10 @@ CONTENT_CATEGORIES = ["introduction", "thesis", "evidence", "organization", "con
 def analyze_content(text: str, transitions: dict) -> dict:
     """Evaluate intro, thesis, evidence, organization, conclusion.
 
-    Tries the OpenAI API when a key is configured; otherwise falls back to a
-    transparent heuristic so the app remains fully functional offline.
+    Tries the local LLM (Ollama/Llama 3.1 by default) when LLM_BASE_URL is set;
+    falls back to a transparent heuristic so the app remains fully functional offline.
     """
-    if OPENAI_API_KEY:
+    if LLM_BASE_URL:
         try:
             return _content_via_llm(text)
         except Exception as exc:  # fall back, but surface why
@@ -731,9 +734,9 @@ def analyze_content(text: str, transitions: dict) -> dict:
 def _content_via_llm(text: str) -> dict:
     from openai import OpenAI
 
-    client = OpenAI(api_key=OPENAI_API_KEY)
+    client = OpenAI(api_key=LLM_API_KEY, base_url=LLM_BASE_URL)
     schema_hint = (
-        "Return ONLY JSON: {\"categories\": {"
+        "Return ONLY valid JSON with no markdown: {\"categories\": {"
         "\"introduction\": {\"score\": 0-100, \"feedback\": str}, "
         "\"thesis\": {...}, \"evidence\": {...}, \"organization\": {...}, "
         "\"conclusion\": {...}}, \"summary\": str}"
@@ -748,19 +751,22 @@ def _content_via_llm(text: str) -> dict:
         "actionable feedback.\n\n" + schema_hint + "\n\nTRANSCRIPT:\n" + text[:12000]
     )
     resp = client.chat.completions.create(
-        model=OPENAI_MODEL,
+        model=LLM_MODEL,
         messages=[{"role": "user", "content": prompt}],
-        response_format={"type": "json_object"},
         temperature=0.3,
     )
-    data = json.loads(resp.choices[0].message.content)
+    raw = resp.choices[0].message.content or ""
+    # Strip markdown code fences if the model wraps its output
+    raw = re.sub(r"^```(?:json)?\s*", "", raw.strip(), flags=re.IGNORECASE)
+    raw = re.sub(r"\s*```$", "", raw.strip())
+    data = json.loads(raw)
     cats = data.get("categories", {})
     scores = [cats.get(c, {}).get("score", 0) for c in CONTENT_CATEGORIES]
     overall = statistics.mean([s for s in scores if isinstance(s, (int, float))] or [0])
     return {
         "available": True,
         "method": "llm",
-        "model": OPENAI_MODEL,
+        "model": LLM_MODEL,
         "categories": cats,
         "summary": data.get("summary", ""),
         "score": _round(overall, 1),
@@ -849,7 +855,7 @@ def _content_heuristic(text: str, transitions: dict) -> dict:
         "method": "heuristic",
         "categories": cats,
         "summary": (f"Heuristic structural review of ~{word_count} words. "
-                    "Configure OPENAI_API_KEY for richer LLM-based feedback."),
+                    "Start Ollama (`ollama serve`) for richer LLM-based feedback."),
         "score": _round(overall, 1),
     }
 
@@ -1050,8 +1056,9 @@ def health():
         "status": "ok",
         "transcribe_backend": TRANSCRIBE_BACKEND,
         "whisper_model": WHISPER_MODEL,
-        "llm_enabled": bool(OPENAI_API_KEY),
-        "llm_model": OPENAI_MODEL if OPENAI_API_KEY else None,
+        "llm_enabled": bool(LLM_BASE_URL),
+        "llm_model": LLM_MODEL,
+        "llm_base_url": LLM_BASE_URL,
     })
 
 
