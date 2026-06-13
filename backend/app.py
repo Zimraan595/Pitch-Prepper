@@ -29,6 +29,7 @@ import os
 import re
 import json
 import math
+import shutil
 import threading
 import tempfile
 import statistics
@@ -1110,6 +1111,9 @@ def health():
         "llm": "ollama (local)",
         "llm_model": LLM_MODEL,
         "ollama_host": OLLAMA_HOST,
+        # ffmpeg is required to decode audio; this tells you if the running
+        # server process can actually find it on PATH.
+        "ffmpeg_found": bool(shutil.which("ffmpeg")),
     })
 
 
