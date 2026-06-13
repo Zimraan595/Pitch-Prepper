@@ -1254,7 +1254,11 @@ def get_db():
     if _mongo_client is None:
         with _mongo_lock:
             if _mongo_client is None:
-                _mongo_client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=2500)
+                try:
+                    _mongo_client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=2500)
+                except Exception:
+                    # Bad/unresolvable URI (e.g. placeholder host) — not fatal.
+                    return None
     db = _mongo_client[MONGO_DB_NAME]
     if not _mongo_indexes_ready:
         try:
@@ -1269,11 +1273,16 @@ def get_db():
 
 
 def db_available() -> bool:
-    """True only if MongoDB actually responds to a ping."""
-    db = get_db()
-    if db is None:
-        return False
+    """True only if MongoDB actually responds to a ping.
+
+    Never raises — any failure (no pymongo, bad URI, server unreachable, auth
+    error) is reported as simply "not available" so callers like /health stay
+    200 instead of 500.
+    """
     try:
+        db = get_db()
+        if db is None:
+            return False
         db.client.admin.command("ping")
         return True
     except Exception:
