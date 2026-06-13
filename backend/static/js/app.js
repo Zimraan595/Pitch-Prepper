@@ -90,7 +90,7 @@
       note.textContent = `✓ Saved to the leaderboard — you scored ${score}.`;
       note.classList.remove("hidden");
       loadLeaderboard();
-    } else if (!authState.user) {
+    } else if (!authState.user && authState.dbAvailable) {
       note.textContent = "ℹ Log in to save this score to the leaderboard.";
       note.classList.remove("hidden");
     } else {
@@ -331,6 +331,9 @@
       bar.innerHTML = `<span class="who">👤 ${esc(authState.user.username)}</span>` +
         `<button class="btn small" id="logoutBtn">Log out</button>`;
       $("logoutBtn").addEventListener("click", logout);
+    } else if (!authState.dbAvailable) {
+      // Accounts are optional: hide sign-in entirely until MongoDB is reachable.
+      bar.innerHTML = "";
     } else {
       bar.innerHTML = `<button class="btn small" id="openLogin">Log in</button>` +
         `<button class="btn small primary" id="openRegister">Sign up</button>`;
@@ -391,16 +394,19 @@
   }
 
   async function loadLeaderboard() {
+    const card = $("leaderboardCard");
     const body = $("leaderboardBody");
     const note = $("leaderboardNote");
     try {
       const r = await fetch("/api/leaderboard");
       const d = await r.json();
       if (d.error) {
-        note.textContent = d.error;
+        // No database yet — keep the leaderboard out of the way entirely.
+        card.classList.add("hidden");
         body.innerHTML = "";
         return;
       }
+      card.classList.remove("hidden");
       const rows = d.leaderboard || [];
       if (!rows.length) {
         note.textContent = "No scores yet — be the first to get on the board!";
@@ -416,7 +422,7 @@
           <td>${row.attempts}</td>
         </tr>`).join("");
     } catch {
-      note.textContent = "Could not load the leaderboard.";
+      card.classList.add("hidden");
     }
   }
 
