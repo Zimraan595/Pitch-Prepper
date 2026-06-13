@@ -146,6 +146,10 @@ footer { text-align: center; padding: 2rem 1rem; }
   position: fixed; inset: 0; background: rgba(0,0,0,.6);
   display: flex; align-items: center; justify-content: center; z-index: 50;
 }
+/* `.modal` sets display:flex, which would otherwise beat the generic
+   `.hidden { display:none }` (equal specificity, defined earlier). This
+   higher-specificity rule lets `hidden` actually hide the modal. */
+.modal.hidden { display: none; }
 .modal-card {
   background: var(--card); border: 1px solid var(--border); border-radius: 14px;
   padding: 1.5rem; width: 340px; max-width: 92vw; position: relative;
