@@ -1367,7 +1367,7 @@ def _record_result(result: dict):
         "wpm": rate.get("wpm"),
         "duration_sec": result.get("duration_sec"),
         "word_count": result.get("word_count"),
-        "created_at": datetime.datetime.utcnow(),
+        "created_at": datetime.datetime.now(datetime.timezone.utc),
     }
     try:
         db.results.insert_one(doc)
@@ -1423,7 +1423,7 @@ def api_register():
         "username": username,
         "email": email or None,
         "password_hash": generate_password_hash(password),
-        "created_at": datetime.datetime.utcnow(),
+        "created_at": datetime.datetime.now(datetime.timezone.utc),
     }
     try:
         res = db.users.insert_one(doc)
