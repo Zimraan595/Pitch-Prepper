@@ -1135,6 +1135,19 @@ def analyze():
         return jsonify(result), status
     except RuntimeError as exc:  # missing Whisper, etc.
         return jsonify({"error": str(exc)}), 503
+    except FileNotFoundError as exc:
+        # WinError 2 / ENOENT — almost always ffmpeg missing from PATH. Whisper,
+        # WhisperX and librosa all shell out to ffmpeg to decode audio.
+        return jsonify({
+            "error": (
+                "Could not find a required program (likely ffmpeg), which is "
+                "needed to read audio. Install ffmpeg and make sure it is on "
+                "your PATH, then restart the server. "
+                "Windows: `winget install ffmpeg` (or `choco install ffmpeg`); "
+                "macOS: `brew install ffmpeg`; Linux: `apt install ffmpeg`. "
+                f"Details: {exc}"
+            )
+        }), 503
     except Exception as exc:  # pragma: no cover
         return jsonify({"error": f"Analysis failed: {exc}"}), 500
     finally:
