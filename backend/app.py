@@ -25,11 +25,11 @@ Run
 
 from __future__ import annotations
 
-import io
 import os
 import re
 import json
 import math
+import threading
 import tempfile
 import statistics
 from collections import Counter
@@ -173,6 +173,15 @@ def _tokenize(text: str):
 # Module 1 — Speech to text (WhisperX, with openai-whisper fallback)
 # ---------------------------------------------------------------------------
 
+# Models are expensive to load (hundreds of MB) so they're loaded once and
+# reused across requests. The lock prevents two concurrent requests on the
+# threaded dev server from loading the same model twice.
+_model_lock = threading.Lock()
+_whisperx_model = None
+_whisperx_align: dict = {}   # language_code -> (align_model, metadata)
+_whisper_model = None
+
+
 def transcribe(audio_path: str) -> dict:
     """Transcribe audio with word-level timestamps.
 
@@ -203,13 +212,40 @@ def _resolve_device() -> str:
         return "cpu"
 
 
+def _get_whisperx_model():
+    """Load (once) and cache the WhisperX transcription model."""
+    global _whisperx_model
+    if _whisperx_model is None:
+        with _model_lock:
+            if _whisperx_model is None:
+                import whisperx  # ImportError -> caller falls back to whisper
+                device = _resolve_device()
+                compute_type = WHISPERX_COMPUTE_TYPE or (
+                    "float16" if device == "cuda" else "int8"
+                )
+                _whisperx_model = whisperx.load_model(
+                    WHISPER_MODEL, device, compute_type=compute_type,
+                )
+    return _whisperx_model
+
+
+def _get_align_model(language: str, device: str):
+    """Load (once per language) and cache the forced-alignment model."""
+    if language not in _whisperx_align:
+        with _model_lock:
+            if language not in _whisperx_align:
+                import whisperx
+                _whisperx_align[language] = whisperx.load_align_model(
+                    language_code=language, device=device,
+                )
+    return _whisperx_align[language]
+
+
 def _transcribe_whisperx(audio_path: str) -> dict:
     import whisperx  # raises ImportError -> caller falls back to whisper
 
     device = _resolve_device()
-    compute_type = WHISPERX_COMPUTE_TYPE or ("float16" if device == "cuda" else "int8")
-
-    model = whisperx.load_model(WHISPER_MODEL, device, compute_type=compute_type)
+    model = _get_whisperx_model()
     audio = whisperx.load_audio(audio_path)
     result = model.transcribe(audio, batch_size=WHISPERX_BATCH_SIZE)
     language = result.get("language")
@@ -217,9 +253,7 @@ def _transcribe_whisperx(audio_path: str) -> dict:
     # Forced alignment for accurate word-level timestamps.
     segments = result.get("segments", [])
     try:
-        align_model, metadata = whisperx.load_align_model(
-            language_code=language, device=device,
-        )
+        align_model, metadata = _get_align_model(language, device)
         aligned = whisperx.align(
             segments, align_model, metadata, audio, device,
             return_char_alignments=False,
@@ -264,9 +298,20 @@ def _transcribe_whisperx(audio_path: str) -> dict:
     }
 
 
+def _get_whisper_model():
+    """Load (once) and cache the openai-whisper fallback model."""
+    global _whisper_model
+    if _whisper_model is None:
+        with _model_lock:
+            if _whisper_model is None:
+                import whisper  # openai-whisper
+                _whisper_model = whisper.load_model(WHISPER_MODEL)
+    return _whisper_model
+
+
 def _transcribe_whisper(audio_path: str) -> dict:
     try:
-        import whisper  # openai-whisper
+        model = _get_whisper_model()
     except ImportError as exc:  # pragma: no cover - env dependent
         raise RuntimeError(
             "No transcription backend available. Install WhisperX "
@@ -274,7 +319,6 @@ def _transcribe_whisper(audio_path: str) -> dict:
             "openai-whisper`)."
         ) from exc
 
-    model = whisper.load_model(WHISPER_MODEL)
     result = model.transcribe(audio_path, word_timestamps=True, fp16=False)
 
     words = []
@@ -339,13 +383,17 @@ def analyze_speaking_rate(words: list, duration: float) -> dict:
         start = i * WINDOW_SECONDS
         end = start + WINDOW_SECONDS
         count = sum(1 for w in words if start <= w["start"] < end)
-        span_min = (min(end, duration) - start) / 60.0
+        span_sec = min(end, duration) - start
+        span_min = span_sec / 60.0
         wpm = count / span_min if span_min > 0 else 0
         label = "ok"
-        if wpm and wpm < WPM_TOO_SLOW:
-            label = "too_slow"
-        elif wpm > WPM_TOO_FAST:
-            label = "too_fast"
+        # Don't flag very short tail windows — a 2s remainder with a couple of
+        # words divides by a tiny span and spuriously reads as "too fast".
+        if span_sec >= 5:
+            if wpm and wpm < WPM_TOO_SLOW:
+                label = "too_slow"
+            elif wpm > WPM_TOO_FAST:
+                label = "too_fast"
         timeline.append({
             "t": _round(start, 1),
             "wpm": _round(wpm, 1),
@@ -1091,6 +1139,19 @@ def analyze():
             os.unlink(tmp.name)
         except OSError:
             pass
+
+
+# Always return JSON (not Flask's HTML error pages) so the frontend's
+# `await resp.json()` never chokes on an oversized upload or server error.
+@app.errorhandler(413)
+def _too_large(_e):
+    mb = app.config["MAX_CONTENT_LENGTH"] // (1024 * 1024)
+    return jsonify({"error": f"File too large. Maximum upload size is {mb} MB."}), 413
+
+
+@app.errorhandler(500)
+def _server_error(_e):
+    return jsonify({"error": "Internal server error."}), 500
 
 
 if __name__ == "__main__":
