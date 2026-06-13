@@ -72,6 +72,7 @@
       } else {
         render(data);
         show("results");
+        handleSaved(data);
       }
     } catch (err) {
       hide("loading");
@@ -80,6 +81,22 @@
       analyzeBtn.disabled = false;
     }
   });
+
+  // Show whether the result was recorded to the leaderboard, then refresh it.
+  function handleSaved(data) {
+    const note = $("savedNote");
+    if (data.saved_to_leaderboard) {
+      const score = data.scores && data.scores.overall != null ? Math.round(data.scores.overall) : "?";
+      note.textContent = `✓ Saved to the leaderboard — you scored ${score}.`;
+      note.classList.remove("hidden");
+      loadLeaderboard();
+    } else if (!authState.user) {
+      note.textContent = "ℹ Log in to save this score to the leaderboard.";
+      note.classList.remove("hidden");
+    } else {
+      note.classList.add("hidden");
+    }
+  }
 
   // ---- Rendering -----------------------------------------------------------
   function render(d) {
@@ -293,6 +310,124 @@
       },
     });
   }
+
+  // ---- Auth & leaderboard --------------------------------------------------
+  const authState = { user: null, dbAvailable: false };
+  let authMode = "login";
+
+  async function loadMe() {
+    try {
+      const r = await fetch("/api/me");
+      const d = await r.json();
+      authState.user = d.user;
+      authState.dbAvailable = d.db_available;
+    } catch { authState.user = null; }
+    renderAuthbar();
+  }
+
+  function renderAuthbar() {
+    const bar = $("authbar");
+    if (authState.user) {
+      bar.innerHTML = `<span class="who">👤 ${esc(authState.user.username)}</span>` +
+        `<button class="btn small" id="logoutBtn">Log out</button>`;
+      $("logoutBtn").addEventListener("click", logout);
+    } else {
+      bar.innerHTML = `<button class="btn small" id="openLogin">Log in</button>` +
+        `<button class="btn small primary" id="openRegister">Sign up</button>`;
+      $("openLogin").addEventListener("click", () => openAuth("login"));
+      $("openRegister").addEventListener("click", () => openAuth("register"));
+    }
+  }
+
+  function openAuth(mode) {
+    if (!authState.dbAvailable) {
+      alert("Accounts are unavailable — the server can't reach MongoDB right now.");
+      return;
+    }
+    setAuthMode(mode);
+    $("authError").textContent = "";
+    $("authForm").reset();
+    $("authModal").classList.remove("hidden");
+  }
+  function closeAuth() { $("authModal").classList.add("hidden"); }
+
+  function setAuthMode(mode) {
+    authMode = mode;
+    $("tabLogin").classList.toggle("active", mode === "login");
+    $("tabRegister").classList.toggle("active", mode === "register");
+    $("authEmail").style.display = mode === "register" ? "block" : "none";
+    $("authSubmit").textContent = mode === "login" ? "Log in" : "Create account";
+  }
+
+  async function submitAuth(e) {
+    e.preventDefault();
+    const body = {
+      username: $("authUsername").value.trim(),
+      password: $("authPassword").value,
+    };
+    if (authMode === "register") body.email = $("authEmail").value.trim();
+    try {
+      const r = await fetch(`/api/${authMode === "login" ? "login" : "register"}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const d = await r.json();
+      if (!r.ok || d.error) { $("authError").textContent = d.error || "Failed."; return; }
+      authState.user = d.user;
+      closeAuth();
+      renderAuthbar();
+      loadLeaderboard();
+    } catch (err) {
+      $("authError").textContent = "Network error: " + err.message;
+    }
+  }
+
+  async function logout() {
+    try { await fetch("/api/logout", { method: "POST" }); } catch {}
+    authState.user = null;
+    renderAuthbar();
+    loadLeaderboard();
+  }
+
+  async function loadLeaderboard() {
+    const body = $("leaderboardBody");
+    const note = $("leaderboardNote");
+    try {
+      const r = await fetch("/api/leaderboard");
+      const d = await r.json();
+      if (d.error) {
+        note.textContent = d.error;
+        body.innerHTML = "";
+        return;
+      }
+      const rows = d.leaderboard || [];
+      if (!rows.length) {
+        note.textContent = "No scores yet — be the first to get on the board!";
+        body.innerHTML = "";
+        return;
+      }
+      note.textContent = "Top scores across everyone (each user's best run).";
+      body.innerHTML = rows.map((row) => `
+        <tr class="${row.is_me ? "me" : ""}">
+          <td>${row.rank}</td>
+          <td>${esc(row.username || "—")}${row.is_me ? " (you)" : ""}</td>
+          <td><b>${row.best_score ?? "—"}</b></td>
+          <td>${row.attempts}</td>
+        </tr>`).join("");
+    } catch {
+      note.textContent = "Could not load the leaderboard.";
+    }
+  }
+
+  // wire up modal + initial load
+  $("authClose").addEventListener("click", closeAuth);
+  $("authModal").addEventListener("click", (e) => { if (e.target.id === "authModal") closeAuth(); });
+  $("tabLogin").addEventListener("click", () => setAuthMode("login"));
+  $("tabRegister").addEventListener("click", () => setAuthMode("register"));
+  $("authForm").addEventListener("submit", submitAuth);
+  loadMe();
+  loadLeaderboard();
 
   // ---- Helpers -------------------------------------------------------------
   function show(id) { $(id).classList.remove("hidden"); }

@@ -9,9 +9,31 @@
 </head>
 <body>
   <header class="hero">
+    <div class="authbar" id="authbar">
+      <!-- populated by app.js: shows Login/Register or the current user + Logout -->
+    </div>
     <h1>🎤 Presentation Helper</h1>
     <p>Upload or record your talk and get coaching on delivery, language, and content.</p>
   </header>
+
+  <!-- Auth modal (login / register) -->
+  <div id="authModal" class="modal hidden">
+    <div class="modal-card">
+      <button class="modal-close" id="authClose">×</button>
+      <div class="tabs">
+        <button class="tab active" id="tabLogin" data-mode="login">Log in</button>
+        <button class="tab" id="tabRegister" data-mode="register">Sign up</button>
+      </div>
+      <form id="authForm">
+        <input type="text" id="authUsername" placeholder="Username" autocomplete="username" />
+        <input type="email" id="authEmail" placeholder="Email (optional)" autocomplete="email" />
+        <input type="password" id="authPassword" placeholder="Password (min 6 chars)" autocomplete="current-password" />
+        <p id="authError" class="auth-error"></p>
+        <button type="submit" class="btn primary" id="authSubmit">Log in</button>
+      </form>
+      <p class="muted small">Sign in to save your scores to the global leaderboard.</p>
+    </div>
+  </div>
 
   <main>
     <!-- Input panel -->
@@ -43,6 +65,7 @@
 
     <!-- Results -->
     <section id="results" class="hidden">
+      <p id="savedNote" class="saved-note hidden"></p>
       <!-- Score summary -->
       <div class="card">
         <div class="score-grid">
@@ -114,9 +137,21 @@
 
       <p id="warnings" class="muted"></p>
     </section>
+
+    <!-- Leaderboard -->
+    <section class="card" id="leaderboardCard">
+      <h2>🏆 Leaderboard</h2>
+      <p class="muted small" id="leaderboardNote">Top scores across everyone. Sign in to get on the board.</p>
+      <table class="leaderboard" id="leaderboardTable">
+        <thead>
+          <tr><th>#</th><th>User</th><th>Best score</th><th>Attempts</th></tr>
+        </thead>
+        <tbody id="leaderboardBody"></tbody>
+      </table>
+    </section>
   </main>
 
-  <footer><p class="muted">Presentation Helper · Flask · Whisper · Librosa · Chart.js</p></footer>
+  <footer><p class="muted">Presentation Helper · Flask · Whisper · Librosa · MongoDB · Chart.js</p></footer>
 
   <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>

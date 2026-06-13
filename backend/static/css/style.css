@@ -132,3 +132,50 @@ footer { text-align: center; padding: 2rem 1rem; }
 @media (max-width: 640px) {
   .two-col { grid-template-columns: 1fr; }
 }
+
+/* ---- Auth bar + modal + leaderboard (MongoDB feature) ---- */
+.hero { position: relative; }
+.authbar {
+  position: absolute; top: 1rem; right: 1.25rem;
+  display: flex; gap: .5rem; align-items: center;
+}
+.authbar .who { color: var(--text); font-weight: 600; margin-right: .25rem; }
+.btn.small { padding: .35rem .75rem; font-size: .85rem; margin-top: 0; width: auto; }
+
+.modal {
+  position: fixed; inset: 0; background: rgba(0,0,0,.6);
+  display: flex; align-items: center; justify-content: center; z-index: 50;
+}
+.modal-card {
+  background: var(--card); border: 1px solid var(--border); border-radius: 14px;
+  padding: 1.5rem; width: 340px; max-width: 92vw; position: relative;
+}
+.modal-close {
+  position: absolute; top: .5rem; right: .7rem; background: none; border: none;
+  color: var(--muted); font-size: 1.5rem; cursor: pointer; line-height: 1;
+}
+.tabs { display: flex; gap: .5rem; margin-bottom: 1rem; }
+.tab {
+  flex: 1; background: var(--card2); border: 1px solid var(--border); color: var(--muted);
+  padding: .5rem; border-radius: 8px; cursor: pointer;
+}
+.tab.active { color: #fff; border-color: var(--accent); }
+#authForm input {
+  width: 100%; padding: .6rem .7rem; margin-bottom: .6rem; background: var(--card2);
+  border: 1px solid var(--border); border-radius: 8px; color: var(--text);
+}
+.auth-error { color: var(--bad); font-size: .85rem; min-height: 1.1em; margin: .2rem 0 .6rem; }
+.small { font-size: .85rem; }
+
+.saved-note {
+  background: rgba(54,211,153,.12); border: 1px solid var(--good); color: var(--good);
+  padding: .6rem .9rem; border-radius: 8px; margin-bottom: 1rem;
+}
+
+.leaderboard { width: 100%; border-collapse: collapse; margin-top: .75rem; }
+.leaderboard th, .leaderboard td {
+  text-align: left; padding: .55rem .6rem; border-bottom: 1px solid var(--border);
+}
+.leaderboard th { color: var(--muted); font-weight: 600; font-size: .85rem; }
+.leaderboard tr.me { background: rgba(91,140,255,.12); }
+.leaderboard tr.me td { color: var(--text); }
