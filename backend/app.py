@@ -43,8 +43,19 @@ from flask import Flask, request, jsonify, render_template
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 200 * 1024 * 1024  # 200 MB upload cap
 
-# Whisper model size: tiny/base/small/medium/large. Smaller = faster, less RAM.
+# Transcription backend: "whisperx" (default — adds forced alignment for
+# accurate word timestamps) or "whisper" (the original openai-whisper).
+TRANSCRIBE_BACKEND = os.environ.get("TRANSCRIBE_BACKEND", "whisperx").lower()
+
+# Whisper model size: tiny/base/small/medium/large-v2/large-v3.
+# Smaller = faster, less RAM. WhisperX works with any of these.
 WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "base")
+
+# WhisperX runtime. Device "auto" picks CUDA when available, else CPU.
+# compute_type defaults to float16 on GPU, int8 on CPU (override if needed).
+WHISPERX_DEVICE = os.environ.get("WHISPERX_DEVICE", "auto")
+WHISPERX_COMPUTE_TYPE = os.environ.get("WHISPERX_COMPUTE_TYPE", "")
+WHISPERX_BATCH_SIZE = int(os.environ.get("WHISPERX_BATCH_SIZE", "16"))
 
 # LLM content analysis (optional).
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
@@ -156,20 +167,108 @@ def _tokenize(text: str):
 
 
 # ---------------------------------------------------------------------------
-# Module 1 — Speech to text (Whisper)
+# Module 1 — Speech to text (WhisperX, with openai-whisper fallback)
 # ---------------------------------------------------------------------------
 
 def transcribe(audio_path: str) -> dict:
-    """Transcribe audio with word-level timestamps using Whisper.
+    """Transcribe audio with word-level timestamps.
 
-    Returns {text, words[], segments[], duration} where each word is
-    {word, start, end}. Raises RuntimeError if Whisper is unavailable.
+    Uses WhisperX by default — it runs Whisper for the transcript and then a
+    forced-alignment pass for much more accurate word timestamps, which the
+    pause/WPM/filler analyzers depend on. Falls back to openai-whisper if
+    WhisperX is unavailable or TRANSCRIBE_BACKEND=whisper.
+
+    Returns {text, language, words[], segments[], duration} where each word is
+    {word, start, end}. Raises RuntimeError if no backend is available.
     """
+    if TRANSCRIBE_BACKEND != "whisper":
+        try:
+            return _transcribe_whisperx(audio_path)
+        except ImportError:
+            # WhisperX not installed — fall back to plain whisper below.
+            pass
+    return _transcribe_whisper(audio_path)
+
+
+def _resolve_device() -> str:
+    if WHISPERX_DEVICE != "auto":
+        return WHISPERX_DEVICE
+    try:
+        import torch
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    except ImportError:
+        return "cpu"
+
+
+def _transcribe_whisperx(audio_path: str) -> dict:
+    import whisperx  # raises ImportError -> caller falls back to whisper
+
+    device = _resolve_device()
+    compute_type = WHISPERX_COMPUTE_TYPE or ("float16" if device == "cuda" else "int8")
+
+    model = whisperx.load_model(WHISPER_MODEL, device, compute_type=compute_type)
+    audio = whisperx.load_audio(audio_path)
+    result = model.transcribe(audio, batch_size=WHISPERX_BATCH_SIZE)
+    language = result.get("language")
+
+    # Forced alignment for accurate word-level timestamps.
+    segments = result.get("segments", [])
+    try:
+        align_model, metadata = whisperx.load_align_model(
+            language_code=language, device=device,
+        )
+        aligned = whisperx.align(
+            segments, align_model, metadata, audio, device,
+            return_char_alignments=False,
+        )
+        segments = aligned.get("segments", segments)
+    except Exception:
+        # Alignment model may be missing for some languages — keep raw segments.
+        pass
+
+    words, text_parts = [], []
+    for seg in segments:
+        text_parts.append((seg.get("text") or "").strip())
+        seg_start = float(seg.get("start", 0.0) or 0.0)
+        seg_end = float(seg.get("end", seg_start) or seg_start)
+        for w in seg.get("words", []):
+            token = (w.get("word") or "").strip()
+            if not token:
+                continue
+            # Some words may be unaligned (no timing) — fall back to segment bounds
+            # so word counts stay accurate for WPM.
+            start = w.get("start")
+            end = w.get("end")
+            words.append({
+                "word": token,
+                "start": float(start) if start is not None else seg_start,
+                "end": float(end) if end is not None else seg_end,
+            })
+
+    text = " ".join(p for p in text_parts if p).strip()
+    duration = 0.0
+    if words:
+        duration = words[-1]["end"]
+    elif segments:
+        duration = float(segments[-1].get("end", 0.0) or 0.0)
+
+    return {
+        "text": text,
+        "language": language,
+        "words": words,
+        "segments": segments,
+        "duration": duration,
+    }
+
+
+def _transcribe_whisper(audio_path: str) -> dict:
     try:
         import whisper  # openai-whisper
     except ImportError as exc:  # pragma: no cover - env dependent
         raise RuntimeError(
-            "Whisper is not installed. Run `pip install openai-whisper`."
+            "No transcription backend available. Install WhisperX "
+            "(`pip install whisperx`) or openai-whisper (`pip install "
+            "openai-whisper`)."
         ) from exc
 
     model = whisper.load_model(WHISPER_MODEL)
@@ -949,6 +1048,7 @@ def index():
 def health():
     return jsonify({
         "status": "ok",
+        "transcribe_backend": TRANSCRIBE_BACKEND,
         "whisper_model": WHISPER_MODEL,
         "llm_enabled": bool(OPENAI_API_KEY),
         "llm_model": OPENAI_MODEL if OPENAI_API_KEY else None,

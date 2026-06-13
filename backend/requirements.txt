@@ -1,7 +1,12 @@
 # Core web framework
 Flask>=3.0
 
-# Speech-to-text with word-level timestamps
+# Speech-to-text with accurate word-level timestamps (forced alignment).
+# WhisperX is the default backend; it pulls in faster-whisper + alignment models.
+whisperx>=3.1
+
+# Fallback transcription backend (used if WhisperX is unavailable, or set
+# TRANSCRIBE_BACKEND=whisper).
 openai-whisper>=20231117
 
 # Audio feature analysis (pitch, RMS volume, silence/pause detection)
