@@ -25,7 +25,8 @@ charts.
 
 **Content & structure (LLM or heuristic)**
 - Scores + written feedback for introduction, thesis, evidence, organization, conclusion.
-- Uses the OpenAI API when `OPENAI_API_KEY` is set; otherwise a transparent heuristic fallback.
+- Uses a **local LLM via Ollama** (Llama 3.1) — no API key, nothing leaves your
+  machine. Falls back to a transparent heuristic if Ollama isn't running.
 
 **Dashboard**
 - Overall weighted score (delivery / language / content) + key metric cards.
@@ -34,7 +35,7 @@ charts.
 
 ## Tech stack
 
-Flask (single-file backend `app.py`) · WhisperX · Librosa · OpenAI API · HTML/CSS/JS · Chart.js
+Flask (single-file backend `app.py`) · WhisperX · Librosa · Ollama / Llama 3.1 (local) · HTML/CSS/JS · Chart.js
 
 ## Setup
 
@@ -42,9 +43,10 @@ Flask (single-file backend `app.py`) · WhisperX · Librosa · OpenAI API · HTM
 cd backend
 pip install -r requirements.txt        # needs the ffmpeg system binary on PATH
 
-# optional: richer LLM content analysis
-export OPENAI_API_KEY=sk-...
-export OPENAI_MODEL=gpt-4o-mini        # optional, default shown
+# optional: local LLM content analysis (otherwise a heuristic is used)
+#   install Ollama from https://ollama.com, then: ollama pull llama3.1
+export LLM_MODEL=llama3.1               # optional, default shown
+export OLLAMA_HOST=http://localhost:11434
 
 # transcription (WhisperX by default)
 export TRANSCRIBE_BACKEND=whisperx     # whisperx | whisper
@@ -64,7 +66,7 @@ analyzer (`analyze_speaking_rate`, `analyze_pitch`, `analyze_volume`,
 transcript/audio data and returns a JSON-serializable dict. `run_analysis()`
 orchestrates them, so new analyzers can be added without touching the others.
 
-Heavy/optional dependencies (Whisper, Librosa, NumPy, OpenAI) are imported
+Heavy/optional dependencies (Whisper, Librosa, NumPy, local LLM) are imported
 lazily — if one is unavailable, that analyzer is skipped with a warning rather
 than crashing the request.
 

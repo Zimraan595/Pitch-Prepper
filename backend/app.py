@@ -12,9 +12,9 @@ Design goals
 * Modular: each analysis concern is an independent, pure-ish function that
   takes transcript/audio data and returns a JSON-serializable dict. New
   analyzers can be added without touching the others.
-* Graceful degradation: heavy/optional dependencies (whisper, librosa, numpy,
-  openai) are imported lazily. If one is missing, that analyzer is skipped and
-  a warning is reported instead of crashing the whole request.
+* Graceful degradation: heavy/optional dependencies (whisper, librosa, numpy)
+  and the local LLM are used lazily. If one is unavailable, that analyzer is
+  skipped or falls back, instead of crashing the whole request.
 
 Run
 ---
@@ -57,12 +57,11 @@ WHISPERX_DEVICE = os.environ.get("WHISPERX_DEVICE", "auto")
 WHISPERX_COMPUTE_TYPE = os.environ.get("WHISPERX_COMPUTE_TYPE", "")
 WHISPERX_BATCH_SIZE = int(os.environ.get("WHISPERX_BATCH_SIZE", "16"))
 
-# LLM content analysis (optional).
-# Defaults to a local Ollama server running Llama 3.1.
-# To use OpenAI instead: LLM_BASE_URL=https://api.openai.com/v1, LLM_API_KEY=sk-..., LLM_MODEL=gpt-4o-mini
+# Content analysis uses a local LLM via Ollama — fully on-device, no API key,
+# nothing sent to any external service. If Ollama isn't running, content
+# analysis falls back to a built-in heuristic.
 LLM_MODEL = os.environ.get("LLM_MODEL", "llama3.1")
-LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "http://localhost:11434/v1")
-LLM_API_KEY = os.environ.get("LLM_API_KEY", "ollama")  # Ollama ignores this value
+OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 
 ALLOWED_EXTENSIONS = {
     "wav", "mp3", "m4a", "mp4", "ogg", "flac", "webm", "aac", "opus",
@@ -765,24 +764,21 @@ CONTENT_CATEGORIES = ["introduction", "thesis", "evidence", "organization", "con
 def analyze_content(text: str, transitions: dict) -> dict:
     """Evaluate intro, thesis, evidence, organization, conclusion.
 
-    Tries the local LLM (Ollama/Llama 3.1 by default) when LLM_BASE_URL is set;
-    falls back to a transparent heuristic so the app remains fully functional offline.
+    Uses the local LLM (Ollama/Llama 3.1) and falls back to a transparent
+    heuristic if Ollama isn't reachable, so the app stays fully functional.
     """
-    if LLM_BASE_URL:
-        try:
-            return _content_via_llm(text)
-        except Exception as exc:  # fall back, but surface why
-            result = _content_heuristic(text, transitions)
-            result["llm_error"] = str(exc)
-            result["method"] = "heuristic (LLM failed)"
-            return result
-    return _content_heuristic(text, transitions)
+    try:
+        return _content_via_llm(text)
+    except Exception as exc:  # fall back, but surface why
+        result = _content_heuristic(text, transitions)
+        result["llm_error"] = str(exc)
+        result["method"] = "heuristic (LLM unavailable)"
+        return result
 
 
 def _content_via_llm(text: str) -> dict:
-    from openai import OpenAI
+    import urllib.request
 
-    client = OpenAI(api_key=LLM_API_KEY, base_url=LLM_BASE_URL)
     schema_hint = (
         "Return ONLY valid JSON with no markdown: {\"categories\": {"
         "\"introduction\": {\"score\": 0-100, \"feedback\": str}, "
@@ -798,16 +794,23 @@ def _content_via_llm(text: str) -> dict:
         "key points, reinforces message). Give each a 0-100 score and concise, "
         "actionable feedback.\n\n" + schema_hint + "\n\nTRANSCRIPT:\n" + text[:12000]
     )
-    resp = client.chat.completions.create(
-        model=LLM_MODEL,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.3,
+    # Call the local Ollama server directly over its native HTTP API. format=json
+    # makes Ollama return guaranteed-valid JSON, so no fence-stripping is needed.
+    payload = json.dumps({
+        "model": LLM_MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": False,
+        "format": "json",
+        "options": {"temperature": 0.3},
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        OLLAMA_HOST.rstrip("/") + "/api/chat",
+        data=payload,
+        headers={"Content-Type": "application/json"},
     )
-    raw = resp.choices[0].message.content or ""
-    # Strip markdown code fences if the model wraps its output
-    raw = re.sub(r"^```(?:json)?\s*", "", raw.strip(), flags=re.IGNORECASE)
-    raw = re.sub(r"\s*```$", "", raw.strip())
-    data = json.loads(raw)
+    with urllib.request.urlopen(req, timeout=180) as resp:
+        body = json.loads(resp.read().decode("utf-8"))
+    data = json.loads(body.get("message", {}).get("content", "") or "{}")
     cats = data.get("categories", {})
     scores = [cats.get(c, {}).get("score", 0) for c in CONTENT_CATEGORIES]
     overall = statistics.mean([s for s in scores if isinstance(s, (int, float))] or [0])
@@ -1104,9 +1107,9 @@ def health():
         "status": "ok",
         "transcribe_backend": TRANSCRIBE_BACKEND,
         "whisper_model": WHISPER_MODEL,
-        "llm_enabled": bool(LLM_BASE_URL),
+        "llm": "ollama (local)",
         "llm_model": LLM_MODEL,
-        "llm_base_url": LLM_BASE_URL,
+        "ollama_host": OLLAMA_HOST,
     })
 
 
