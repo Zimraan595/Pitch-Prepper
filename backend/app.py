@@ -758,16 +758,22 @@ def analyze_fillers(words: list, text: str, duration: float) -> dict:
             t = _nearest_word_time(words, m.start(), text)
             found.append({"word": phrase, "t": t})
 
-    # Hard fillers (um, uh, …): count anywhere, from timestamped tokens so the
-    # timestamps are exact.
+    # Single-token pass over the timestamped words:
+    #  - Hard fillers (um, uh, …): always count (timestamps are exact here).
+    #  - Discourse markers (so, well, yeah, …): count when REPEATED back-to-back
+    #    ("yeah yeah yeah"), which is unambiguous filler/backchannel.
+    prev_token = None
     for w in words:
         token = re.sub(r"[^a-z']", "", w["word"].lower())
         if token in FILLER_WORDS_HARD:
             found.append({"word": token, "t": _round(w["start"], 2)})
+        elif token and token == prev_token and token in FILLER_DISCOURSE:
+            found.append({"word": token, "t": _round(w["start"], 2)})
+        prev_token = token
 
-    # Discourse markers (so, well, like, …): count only when sentence-/clause-
-    # initial — i.e. at the very start of the transcript or right after sentence
-    # punctuation — so ordinary mid-sentence usage isn't penalized.
+    # Discourse markers (so, well, like, …): also count when sentence-/clause-
+    # initial — at the very start or right after sentence punctuation — so
+    # ordinary mid-sentence usage isn't penalized but "So, ..." openers are.
     for marker in FILLER_DISCOURSE:
         pattern = r"(?:^|[.!?]['\"\)\]]?\s+)(" + re.escape(marker) + r")\b"
         for m in re.finditer(pattern, lowered):
@@ -921,7 +927,14 @@ def analyze_repetition(text: str, words: list) -> dict:
         f"{a} {b}": c for (a, b), c in bigrams.most_common(8) if c >= 3
     }
 
-    penalty = len(repeated_words) * 4 + len(repeated_starters) * 5
+    # Vocabulary concentration: if one word dominates the talk (e.g. saying
+    # "yeah" over and over), that's low-substance and should be punished hard.
+    # Counting distinct repeated words barely moved the score before.
+    total = len(tokens)
+    top_share = (word_freq.most_common(1)[0][1] / total) if total else 0.0
+    concentration_penalty = max(0.0, top_share - 0.15) * 200  # >15% share hurts
+
+    penalty = len(repeated_words) * 4 + len(repeated_starters) * 5 + concentration_penalty
     score = _clamp(100 - penalty)
 
     return {
@@ -929,6 +942,7 @@ def analyze_repetition(text: str, words: list) -> dict:
         "repeated_words": repeated_words,
         "repeated_sentence_starters": repeated_starters,
         "repeated_phrases": repeated_phrases,
+        "top_word_share": _round(top_share, 2),
         "score": _round(score, 1),
     }
 
