@@ -97,23 +97,59 @@ run after that is much faster.
 
 ---
 
-## 🎬 Using the app
+## 🎬 Using the app — a visual walkthrough
 
-1. **Give it your talk.** Either:
-   - **Upload audio** — pick a file (`wav, mp3, m4a, mp4, ogg, flac, webm, aac, opus`, up to 200 MB), **or**
-   - **Record** — click *● Start recording*, present, then stop. (Browser recordings are saved as `.webm` — which is exactly why ffmpeg is required.)
-2. **Click "Analyze presentation."** A spinner appears while it transcribes and analyzes.
-3. **Read your dashboard:**
+Everything below happens in your browser at **http://localhost:5000**.
 
-   | Section | What it shows |
-   |---------|---------------|
-   | **Overall Score** | A single 0–100 score, with Delivery / Language / Content bars beneath it. |
-   | **Key Metrics** | At-a-glance cards (WPM, fillers per minute, pauses, etc.). |
-   | **Top 3 Recommendations** | The highest-impact changes, plus your strengths and areas to improve. |
-   | **Visualizations** | Charts for speaking rate, pitch, volume, pauses, filler words, and content. |
-   | **Content & Structure** | Per-section scores and written feedback (intro, thesis, evidence, organization, conclusion). |
-   | **Language Details** | Transitions, buzzwords, and repetition breakdowns. |
-   | **Transcript** | The full text of what you said. |
+### 1. Give it your talk
+
+On the **Home** screen you have two options: **Upload an audio file**
+(`wav, mp3, m4a, mp4, ogg, flac, webm, aac, opus`, up to 200 MB) or click
+**Start Recording** to capture yourself live (recordings need to be at least
+~15 seconds). Then press **Analyze Presentation**.
+
+![Pitch Prepper home screen — upload or record your talk, with a live leaderboard preview](docs/images/home.png)
+
+### 2. (Optional) Sign in to save your scores
+
+Click **Login / Sign Up** in the top-right to create an account (username +
+password; email optional). While you're logged in, every analysis is
+automatically recorded and ranked on the global leaderboard. This needs MongoDB —
+skip it and the core analysis still works exactly the same.
+
+![Pitch Prepper sign-in modal with Log in and Sign up tabs](docs/images/auth.png)
+
+### 3. Read your results dashboard
+
+After about a minute you get your **Overall Score** (0–100), broken out into
+**Delivery**, **Language**, and **Content**, plus your **Top 3 Recommendations**
+and a list of strengths and areas to improve. The score ring and bars are
+color-coded — green (good ≥ 75), amber (fair 55–74), and red (needs work < 55).
+
+![Pitch Prepper results dashboard showing the overall score, performance metrics, and top 3 recommendations](docs/images/results.png)
+
+### 4. Dive into the detailed analytics
+
+Scroll to the **Charts** for the six visualizations — speaking rate (WPM), pitch
+variation, filler words, pause timeline, content effectiveness, and volume
+dynamics. **Click any chart to enlarge it.**
+
+![Pitch Prepper detailed analytics with speaking-rate, pitch, filler-word, pause, content, and volume charts](docs/images/analytics.png)
+
+The full dashboard also includes a **Content & Structure** breakdown
+(intro, thesis, evidence, organization, conclusion), **Language Details**
+(transitions, buzzwords, repeated words/phrases, keywords), and the complete
+**Transcript** of what you said.
+
+### 5. Climb the leaderboard
+
+The **Leaderboard** tab ranks everyone by their best overall score, so you can
+track your progress over time and compete. Your own row is highlighted.
+
+![Pitch Prepper global leaderboard ranking users by their best score](docs/images/leaderboard.png)
+
+> 💡 The screenshots above show the redesigned Pitch Prepper interface. Your
+> charts and numbers will reflect *your* recording.
 
 ---
 
