@@ -296,7 +296,8 @@ unavailable, that analyzer is skipped with a warning rather than crashing the re
 |--------|-------------|----------------------------------------------|
 | GET    | `/`         | Dashboard UI                                 |
 | GET    | `/health`   | Status + which models/services are configured (incl. `db_available`) |
-| POST   | `/analyze`  | `multipart/form-data` field `audio` → results JSON (records to leaderboard if logged in) |
+| POST   | `/analyze`  | `multipart/form-data` field `audio` → `{job_id}` (analysis runs in the background; poll status) |
+| GET    | `/analyze/status/<job_id>` | `{state: processing\|done\|error}`; when `done`, the results JSON is under `result` (records to leaderboard if logged in) |
 | POST   | `/api/ideal-delivery` | `{transcript}` → polished script + (if ElevenLabs is configured) base64 MP3 audio |
 | GET    | `/api/voices` | ElevenLabs voices available to the configured account (id, name, category) |
 | POST   | `/api/register` | `{username, email?, password}` → create account + log in |
