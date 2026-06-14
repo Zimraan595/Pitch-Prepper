@@ -185,6 +185,34 @@ footer { text-align: center; padding: 2rem 1rem; }
   padding: .6rem .9rem; border-radius: 8px; margin-bottom: 1rem;
 }
 
+/* ---- Ideal delivery (ElevenLabs TTS) ---- */
+.btn.ideal-btn { width: auto; margin-top: .5rem; margin-right: .6rem; }
+#idealStatus { font-size: .85rem; }
+#idealOutput { margin-top: 1rem; }
+#idealAudio { width: 100%; margin-bottom: .75rem; }
+.ideal-script summary { cursor: pointer; color: var(--muted); font-size: .9rem; }
+.ideal-script .transcript { margin-top: .6rem; }
+
+/* Click-to-select transcript */
+.ideal-picker {
+  max-height: 200px; overflow-y: auto; background: var(--card2);
+  border: 1px solid var(--border); border-radius: 8px;
+  padding: .85rem; margin: .5rem 0; line-height: 1.8;
+}
+.ideal-picker .sent {
+  cursor: pointer; border-radius: 4px; padding: .02rem .12rem;
+  transition: background .1s;
+}
+.ideal-picker .sent:hover { background: rgba(91,140,255,.18); }
+.ideal-picker .sent.selected {
+  background: rgba(91,140,255,.32); box-shadow: inset 0 0 0 1px var(--accent);
+}
+.ideal-controls { display: flex; align-items: center; gap: .9rem; margin-bottom: .3rem; }
+.linkbtn {
+  background: none; border: none; color: var(--accent); cursor: pointer;
+  font-size: .8rem; padding: 0; text-decoration: underline;
+}
+
 .leaderboard { width: 100%; border-collapse: collapse; margin-top: .75rem; }
 .leaderboard th, .leaderboard td {
   text-align: left; padding: .55rem .6rem; border-bottom: 1px solid var(--border);

@@ -77,9 +77,32 @@ WHISPERX_BATCH_SIZE = int(os.environ.get("WHISPERX_BATCH_SIZE", "16"))
 # analysis falls back to a built-in heuristic.
 LLM_MODEL = os.environ.get("LLM_MODEL", "llama3.1")
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
-# Fixed seed + temperature 0 (see analyze_content) make the LLM's content
-# scores reproducible for the same transcript. Override LLM_SEED if desired.
-LLM_SEED = int(os.environ.get("LLM_SEED", "42"))
+# The "ideal delivery" rewrite is a simple text-cleanup task (strip fillers,
+# tighten phrasing) rather than reasoning, so it uses a smaller/faster Ollama
+# model than the content analysis above. This matters because the rewrite scales
+# with transcript length — an 8B model on CPU is very slow on a 5-minute talk —
+# and a 3B model does cleanup just as well. Falls back to the filler-stripping
+# heuristic if this model isn't pulled (`ollama pull llama3.2:3b`).
+IDEAL_REWRITE_MODEL = os.environ.get("IDEAL_REWRITE_MODEL", "llama3.2:3b")
+
+# --- Ideal-delivery playback (ElevenLabs text-to-speech) -------------------
+# OPTIONAL, opt-in cloud feature. The "hear how it could sound" card rewrites a
+# user's transcript into a tighter script and reads it back in a clear voice.
+# Unlike every other feature here it sends text to ElevenLabs' servers, so it is
+# OFF by default: when ELEVENLABS_API_KEY is unset the card is simply hidden and
+# the app stays fully local — the same graceful-degradation pattern as Ollama
+# and MongoDB. Synthesis runs only on an explicit user click, never during a
+# normal analysis.
+ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY", "").strip()
+ELEVENLABS_API_BASE = os.environ.get("ELEVENLABS_API_BASE", "https://api.elevenlabs.io")
+# Voice to synthesize with. Leave UNSET to auto-pick a voice from your account
+# (preferring your own cloned/generated voices). Important: the free ElevenLabs
+# API tier cannot use the shared "library"/premade voices (Rachel, etc.) — it
+# returns HTTP 402 — so you must use a voice you own. See _resolve_voice_id().
+ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "").strip()
+ELEVENLABS_MODEL = os.environ.get("ELEVENLABS_MODEL", "eleven_multilingual_v2")
+# Cap the text sent for a rewrite + synthesis — keeps latency and credit use sane.
+IDEAL_DELIVERY_MAX_CHARS = int(os.environ.get("IDEAL_DELIVERY_MAX_CHARS", "5000"))
 
 # --- User accounts, sessions & leaderboard (MongoDB) -----------------------
 # Login sessions are signed with this key — set a real SECRET_KEY in production.
@@ -1348,6 +1371,8 @@ def run_analysis(audio_path: str) -> dict:
         "content": content,
         "feedback": feedback,
         "warnings": warnings,
+        # Whether the optional "hear how it could sound" card should be offered.
+        "ideal_delivery_available": elevenlabs_available(),
     }
 
 
@@ -1495,6 +1520,199 @@ def _record_result(result: dict):
 
 
 # ---------------------------------------------------------------------------
+# Module 7 — Ideal-delivery playback (script rewrite + ElevenLabs TTS)
+# ---------------------------------------------------------------------------
+#
+# "Hear how it could sound": rewrite the transcript into a tighter spoken script
+# (local LLM, with a filler-stripping heuristic fallback), then synthesize it as
+# audio with ElevenLabs. Optional and opt-in — gated on ELEVENLABS_API_KEY — and
+# the only feature that sends text off the machine, so it runs solely when the
+# user explicitly asks for it (see /api/ideal-delivery), never during /analyze.
+
+# Vocalized pauses only — unambiguous disfluencies that are always safe to drop.
+# The broader FILLER_WORDS list (so, like, well, right…) is deliberately NOT used
+# here: those double as real words, so blind removal would mangle the sentence.
+# The LLM rewrite handles them in context; this heuristic is just the offline net.
+_HEURISTIC_FILLERS = {"um", "uh", "uhm", "er", "ah", "hmm", "mm", "mhm"}
+
+
+_resolved_voice_id = None
+
+
+def elevenlabs_available() -> bool:
+    """True only if an ElevenLabs API key is configured."""
+    return bool(ELEVENLABS_API_KEY)
+
+
+def list_voices() -> list:
+    """Return the voices available to the configured ElevenLabs account.
+
+    Each entry is {voice_id, name, category}. `category` is "premade"/"famous"
+    for the shared library voices (blocked on the free API tier) versus
+    "cloned"/"generated"/"professional" for voices you own.
+    """
+    import urllib.request
+    if not elevenlabs_available():
+        return []
+    url = ELEVENLABS_API_BASE.rstrip("/") + "/v1/voices"
+    req = urllib.request.Request(url, headers={"xi-api-key": ELEVENLABS_API_KEY})
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    return [
+        {"voice_id": v.get("voice_id"), "name": v.get("name"), "category": v.get("category")}
+        for v in data.get("voices", []) if v.get("voice_id")
+    ]
+
+
+def _resolve_voice_id() -> str:
+    """Pick the voice to synthesize with.
+
+    An explicit ELEVENLABS_VOICE_ID always wins. Otherwise auto-pick from the
+    account, preferring the user's OWN voices (cloned/generated/professional),
+    because the free API tier rejects the shared library/premade voices (402).
+    The choice is cached so we don't re-list voices on every request.
+    """
+    global _resolved_voice_id
+    if ELEVENLABS_VOICE_ID:
+        return ELEVENLABS_VOICE_ID
+    if _resolved_voice_id:
+        return _resolved_voice_id
+    voices = list_voices()
+    if not voices:
+        raise RuntimeError(
+            "No ElevenLabs voices found on this account. Create one at "
+            "elevenlabs.io (VoiceLab → Instant Voice Clone is free) or set "
+            "ELEVENLABS_VOICE_ID to a voice you own."
+        )
+    own = [v for v in voices if v.get("category") not in (None, "premade", "famous")]
+    _resolved_voice_id = (own or voices)[0]["voice_id"]
+    return _resolved_voice_id
+
+
+def _strip_fillers_heuristic(text: str) -> str:
+    """Offline fallback rewrite: drop vocalized fillers and tidy whitespace.
+
+    Used when the LLM is unreachable so the feature still produces a cleaner
+    script. Conservative on purpose — only removes clear disfluencies.
+    """
+    cleaned = text
+    for phrase in FILLER_PHRASES:  # "you know", "i mean", "sort of", "kind of"
+        cleaned = re.sub(r"\b" + re.escape(phrase) + r"\b", "", cleaned, flags=re.I)
+    filler_re = re.compile(
+        r"\b(" + "|".join(re.escape(w) for w in sorted(_HEURISTIC_FILLERS)) + r")\b",
+        re.I,
+    )
+    cleaned = filler_re.sub("", cleaned)
+    cleaned = re.sub(r"\s+([,.!?;:])", r"\1", cleaned)   # space before punctuation
+    cleaned = re.sub(r"(,\s*){2,}", ", ", cleaned)        # collapse ", ," runs
+    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
+    return cleaned or text
+
+
+def improve_script(text: str) -> dict:
+    """Rewrite the transcript into a polished spoken script.
+
+    Returns {script, method[, llm_error]}. Tries the local LLM (Ollama) for a
+    real rewrite; if that's unavailable, falls back to stripping vocalized
+    fillers so the feature still produces something usable offline.
+    """
+    text = (text or "").strip()
+    if not text:
+        return {"script": "", "method": "none"}
+    try:
+        return {"script": _improve_via_llm(text), "method": "llm", "model": IDEAL_REWRITE_MODEL}
+    except Exception as exc:
+        return {
+            "script": _strip_fillers_heuristic(text),
+            "method": "heuristic (LLM unavailable)",
+            "llm_error": str(exc),
+        }
+
+
+def _improve_via_llm(text: str) -> str:
+    """Ask the local Ollama model to rewrite the transcript. Raises on failure."""
+    import urllib.request
+
+    prompt = (
+        "You are an expert speechwriter and presentation coach. Rewrite the "
+        "following spoken-presentation transcript into a polished version of the "
+        "SAME talk that the speaker could deliver aloud. Keep the speaker's "
+        "meaning, intent, and first-person voice. Remove filler words and false "
+        "starts, tighten wordy phrasing, fix grammar, and smooth the flow with "
+        "natural transitions — but do NOT add new facts, claims, or extra length. "
+        "Return ONLY valid JSON with no markdown: "
+        "{\"script\": \"<the rewritten talk as plain text>\"}"
+        "\n\nTRANSCRIPT:\n" + text[:12000]
+    )
+    payload = json.dumps({
+        "model": IDEAL_REWRITE_MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": False,
+        "format": "json",
+        "options": {"temperature": 0.4},
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        OLLAMA_HOST.rstrip("/") + "/api/chat",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=180) as resp:
+        body = json.loads(resp.read().decode("utf-8"))
+    data = json.loads(body.get("message", {}).get("content", "") or "{}")
+    script = (data.get("script") or "").strip()
+    if not script:
+        raise ValueError("LLM returned an empty script")
+    return script
+
+
+def synthesize_speech(text: str) -> bytes:
+    """Synthesize `text` to MP3 bytes via the ElevenLabs API. Raises on failure."""
+    import urllib.request
+    import urllib.error
+
+    if not elevenlabs_available():
+        raise RuntimeError("ElevenLabs is not configured (set ELEVENLABS_API_KEY).")
+    voice_id = _resolve_voice_id()
+    url = (
+        ELEVENLABS_API_BASE.rstrip("/")
+        + "/v1/text-to-speech/" + voice_id
+        + "?output_format=mp3_44100_128"
+    )
+    payload = json.dumps({
+        "text": text,
+        "model_id": ELEVENLABS_MODEL,
+        # Expressive but stable — models the varied, well-paced delivery the app
+        # coaches users toward, without drifting off-script into a flat read.
+        "voice_settings": {
+            "stability": 0.45,
+            "similarity_boost": 0.75,
+            "style": 0.3,
+            "use_speaker_boost": True,
+        },
+    }).encode("utf-8")
+    req = urllib.request.Request(url, data=payload, headers={
+        "xi-api-key": ELEVENLABS_API_KEY,
+        "Content-Type": "application/json",
+        "Accept": "audio/mpeg",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            return resp.read()
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", "replace")[:500]
+        if exc.code == 402:
+            raise RuntimeError(
+                "ElevenLabs rejected this voice on your current plan (HTTP 402). "
+                "The free API tier can't use the shared library/premade voices. "
+                "Create your own voice at elevenlabs.io (VoiceLab → Instant Voice "
+                "Clone is free), then set ELEVENLABS_VOICE_ID to it — or just leave "
+                "it unset and the app auto-picks one of your own voices. See your "
+                "available voices at /api/voices."
+            ) from exc
+        raise RuntimeError(f"ElevenLabs API error {exc.code}: {detail}") from exc
+
+
+# ---------------------------------------------------------------------------
 # Flask routes
 # ---------------------------------------------------------------------------
 
@@ -1517,6 +1735,9 @@ def health():
         "ffmpeg_found": bool(shutil.which("ffmpeg")),
         "db_available": db_available(),
         "min_recording_sec": MIN_DURATION_SEC,
+        # Optional "hear how it could sound" playback (ElevenLabs TTS).
+        "elevenlabs_available": elevenlabs_available(),
+        "elevenlabs_voice_id": (ELEVENLABS_VOICE_ID or "auto") if elevenlabs_available() else None,
     })
 
 
@@ -1628,6 +1849,59 @@ def api_leaderboard():
         "is_me": r.get("_id") == me,
     } for i, r in enumerate(rows)]
     return jsonify({"leaderboard": leaderboard})
+
+
+@app.route("/api/ideal-delivery", methods=["POST"])
+def api_ideal_delivery():
+    """Rewrite a transcript into a tighter script and, if ElevenLabs is
+    configured, synthesize it to audio — the "hear how it could sound" feature.
+
+    Generated on demand (not during /analyze): synthesis costs ElevenLabs credits
+    and sends text to their API, so doing it only on an explicit click keeps the
+    default analysis flow fully local.
+    """
+    data = request.get_json(silent=True) or {}
+    transcript = (data.get("transcript") or "").strip()
+    if not transcript:
+        return jsonify({"error": "No transcript provided."}), 400
+
+    improved = improve_script(transcript[:IDEAL_DELIVERY_MAX_CHARS])
+    script = improved.get("script") or ""
+    result = {
+        "script": script,
+        "method": improved.get("method"),
+        "voice_id": None,
+        "audio": None,
+    }
+    if not elevenlabs_available():
+        # Defensive — the UI hides the card when unavailable, but if the endpoint
+        # is hit directly, return the rewrite and say how to enable audio.
+        result["note"] = "Set ELEVENLABS_API_KEY to also hear this script read aloud."
+        return jsonify(result)
+    try:
+        import base64
+        audio = synthesize_speech(script)
+        result["audio"] = "data:audio/mpeg;base64," + base64.b64encode(audio).decode("ascii")
+        result["voice_id"] = _resolve_voice_id()  # cached — reports which voice was used
+    except Exception as exc:
+        # Keep the rewritten script even if synthesis fails (bad key, quota, etc.).
+        result["audio_error"] = str(exc)
+    return jsonify(result)
+
+
+@app.route("/api/voices")
+def api_voices():
+    """List the ElevenLabs voices available to the configured account, so you can
+    pick one for ELEVENLABS_VOICE_ID (free tier: use a voice you own)."""
+    if not elevenlabs_available():
+        return jsonify({
+            "error": "ElevenLabs is not configured (set ELEVENLABS_API_KEY).",
+            "voices": [],
+        }), 200
+    try:
+        return jsonify({"voices": list_voices()})
+    except Exception as exc:
+        return jsonify({"error": f"Could not list voices: {exc}", "voices": []}), 200
 
 
 @app.route("/analyze", methods=["POST"])
