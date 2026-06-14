@@ -105,7 +105,7 @@
 
       <!-- Charts -->
       <div class="card">
-        <h2>Visualizations</h2>
+        <h2>Visualizations <span class="muted" style="font-weight:400;font-size:.6em">(click any chart to enlarge)</span></h2>
         <div class="charts">
           <div class="chart-box"><h3>Speaking rate (WPM)</h3><canvas id="wpmChart"></canvas></div>
           <div class="chart-box"><h3>Pitch (Hz)</h3><canvas id="pitchChart"></canvas></div>
@@ -152,6 +152,15 @@
   </main>
 
   <footer><p class="muted">Presentation Helper · Flask · Whisper · Librosa · MongoDB · Chart.js</p></footer>
+
+  <!-- Enlarged-chart modal -->
+  <div id="chartModal" class="modal hidden">
+    <div class="modal-card chart-modal-card">
+      <button class="modal-close" id="chartModalClose">×</button>
+      <h3 id="chartModalTitle" style="margin-top:0"></h3>
+      <div class="chart-modal-body"><canvas id="chartModalCanvas"></canvas></div>
+    </div>
+  </div>
 
   <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>

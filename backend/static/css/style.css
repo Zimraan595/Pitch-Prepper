@@ -100,9 +100,18 @@ input[type=file] {
 .metric .lbl { color: var(--muted); font-size: .8rem; margin-top: .25rem; }
 
 /* Charts */
-.charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1.5rem; }
-.chart-box { background: var(--card2); border-radius: 10px; padding: 1rem; }
+.charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem; }
+.chart-box {
+  background: var(--card2); border-radius: 10px; padding: 1rem;
+  cursor: pointer; transition: box-shadow .15s, transform .15s;
+}
+.chart-box:hover { box-shadow: 0 0 0 2px var(--accent); }
 .chart-box canvas { max-height: 240px; }
+
+/* Enlarged-chart modal (reuses .modal / .modal.hidden from the auth modal) */
+.chart-modal-card { width: 88vw; max-width: 1000px; }
+.chart-modal-body { position: relative; height: 70vh; }
+.chart-modal-body canvas { width: 100% !important; height: 100% !important; }
 
 /* Lists */
 .recs { padding-left: 1.2rem; }

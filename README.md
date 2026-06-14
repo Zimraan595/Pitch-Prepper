@@ -216,6 +216,8 @@ variables. In PowerShell, set one with `$env:NAME = "value"` before `python app.
 | `MONGO_URI` | `mongodb://localhost:27017` | MongoDB connection for accounts & leaderboard. |
 | `MONGO_DB_NAME` | `presentation_helper` | Database name to use. |
 | `SECRET_KEY` | `dev-insecure-change-me` | Signs login session cookies — **set a real value in production.** |
+| `SESSION_DAYS` | `30` | How long a login stays valid (persistent across browser restarts). |
+| `MIN_RECORDING_SEC` | `15` | Minimum seconds of audio; shorter clips are rejected to prevent low-effort uploads. |
 | `PORT` | `5000` | Port the web app runs on. |
 
 **Tip:** on a CPU-only machine, `WHISPER_MODEL=tiny` or `small` makes analysis

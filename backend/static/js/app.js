@@ -7,6 +7,9 @@
   let mediaRecorder = null;
   let chunks = [];
   let charts = {};
+  let chartConfigs = {};       // canvas id -> Chart config (for click-to-enlarge)
+  let recordStart = 0;         // ms timestamp when recording began
+  let minRecordingSec = 15;    // overwritten from /health
 
   const fileInput = $("fileInput");
   const recordBtn = $("recordBtn");
@@ -32,18 +35,28 @@
       mediaRecorder = new MediaRecorder(stream);
       mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
       mediaRecorder.onstop = () => {
-        selectedBlob = new Blob(chunks, { type: "audio/webm" });
-        selectedName = "recording.webm";
         stream.getTracks().forEach((t) => t.stop());
         recordBtn.textContent = "● Start recording";
         recordBtn.classList.remove("recording");
-        $("recordStatus").textContent = "";
+        const elapsed = (Date.now() - recordStart) / 1000;
+        if (elapsed < minRecordingSec) {
+          // Too short — reject client-side so they don't waste an analysis.
+          selectedBlob = null; selectedName = null;
+          $("recordStatus").textContent =
+            `Recording was only ${elapsed.toFixed(0)}s — record at least ${minRecordingSec}s.`;
+          updateSelection();
+          return;
+        }
+        selectedBlob = new Blob(chunks, { type: "audio/webm" });
+        selectedName = "recording.webm";
+        $("recordStatus").textContent = `Recorded ${elapsed.toFixed(0)}s ✓`;
         updateSelection();
       };
       mediaRecorder.start();
+      recordStart = Date.now();
       recordBtn.textContent = "■ Stop recording";
       recordBtn.classList.add("recording");
-      $("recordStatus").textContent = "Recording…";
+      $("recordStatus").textContent = `Recording… (min ${minRecordingSec}s)`;
     } catch (err) {
       showError("Microphone access denied or unavailable.");
     }
@@ -217,13 +230,20 @@
     },
   };
 
+  // Create a chart and remember its config so it can be re-rendered, enlarged,
+  // in the click-to-zoom modal.
+  function mkChart(id, config) {
+    chartConfigs[id] = config;
+    return new Chart($(id), config);
+  }
+
   function renderCharts(d) {
     destroyCharts();
     const dl = d.delivery;
 
     // WPM timeline
     const wpm = dl.rate.timeline || [];
-    charts.wpm = new Chart($("wpmChart"), {
+    charts.wpm = mkChart("wpmChart", {
       type: "line",
       data: {
         labels: wpm.map((p) => p.t + "s"),
@@ -240,7 +260,7 @@
 
     // Pitch
     const pitch = (dl.pitch.timeline || []).filter((p) => p.hz != null);
-    charts.pitch = new Chart($("pitchChart"), {
+    charts.pitch = mkChart("pitchChart", {
       type: "line",
       data: {
         labels: pitch.map((p) => p.t),
@@ -251,7 +271,7 @@
 
     // Volume
     const vol = dl.volume.timeline || [];
-    charts.volume = new Chart($("volumeChart"), {
+    charts.volume = mkChart("volumeChart", {
       type: "line",
       data: {
         labels: vol.map((p) => p.t),
@@ -265,7 +285,7 @@
     const pauses = dl.pauses.timeline || [];
     const colorOf = (t) => ({ strategic: "#36d399", long_awkward: "#f87272",
       hesitation: "#fbbd23", normal: "#5b8cff" }[t] || "#5b8cff");
-    charts.pause = new Chart($("pauseChart"), {
+    charts.pause = mkChart("pauseChart", {
       type: "scatter",
       data: {
         datasets: [{
@@ -282,20 +302,21 @@
       }),
     });
 
-    // Filler words bar
-    const fillers = dl.fillers.by_word || {};
-    charts.filler = new Chart($("fillerChart"), {
+    // Filler words bar — top 5 most frequent, highest first.
+    // by_word arrives already sorted desc (Counter.most_common), so slice 5.
+    const fillerTop = Object.entries(dl.fillers.by_word || {}).slice(0, 5);
+    charts.filler = mkChart("fillerChart", {
       type: "bar",
       data: {
-        labels: Object.keys(fillers),
-        datasets: [{ data: Object.values(fillers), backgroundColor: "#f87272" }],
+        labels: fillerTop.map(([w]) => w),
+        datasets: [{ data: fillerTop.map(([, c]) => c), backgroundColor: "#f87272" }],
       },
       options: baseOpts,
     });
 
     // Content radar
     const cats = (d.content && d.content.categories) || {};
-    charts.content = new Chart($("contentChart"), {
+    charts.content = mkChart("contentChart", {
       type: "radar",
       data: {
         labels: Object.keys(cats),
@@ -311,6 +332,27 @@
           grid: { color: "#2a3346" }, angleLines: { color: "#2a3346" }, pointLabels: { color: "#e6e9f0" } } },
       },
     });
+  }
+
+  // ---- Click-to-enlarge charts --------------------------------------------
+  let modalChart = null;
+
+  function openChartModal(canvasId, title) {
+    const cfg = chartConfigs[canvasId];
+    if (!cfg) return;
+    const clone = structuredClone(cfg);          // configs hold only plain data
+    clone.options = Object.assign({}, clone.options, {
+      responsive: true, maintainAspectRatio: false,
+    });
+    $("chartModalTitle").textContent = title || "";
+    $("chartModal").classList.remove("hidden");
+    if (modalChart) modalChart.destroy();
+    modalChart = new Chart($("chartModalCanvas"), clone);
+  }
+
+  function closeChartModal() {
+    $("chartModal").classList.add("hidden");
+    if (modalChart) { modalChart.destroy(); modalChart = null; }
   }
 
   // ---- Auth & leaderboard --------------------------------------------------
@@ -428,12 +470,36 @@
     }
   }
 
-  // wire up modal + initial load
+  // Pull config (minimum recording length) from the server.
+  async function loadConfig() {
+    try {
+      const d = await (await fetch("/health")).json();
+      if (typeof d.min_recording_sec === "number") minRecordingSec = d.min_recording_sec;
+    } catch { /* keep default */ }
+  }
+
+  // Click any chart to open an enlarged version.
+  function wireChartZoom() {
+    document.querySelectorAll(".chart-box").forEach((box) => {
+      box.addEventListener("click", () => {
+        const canvas = box.querySelector("canvas");
+        const title = (box.querySelector("h3") || {}).textContent || "";
+        if (canvas && canvas.id) openChartModal(canvas.id, title);
+      });
+    });
+  }
+
+  // wire up modals + initial load
   $("authClose").addEventListener("click", closeAuth);
   $("authModal").addEventListener("click", (e) => { if (e.target.id === "authModal") closeAuth(); });
   $("tabLogin").addEventListener("click", () => setAuthMode("login"));
   $("tabRegister").addEventListener("click", () => setAuthMode("register"));
   $("authForm").addEventListener("submit", submitAuth);
+  $("chartModalClose").addEventListener("click", closeChartModal);
+  $("chartModal").addEventListener("click", (e) => { if (e.target.id === "chartModal") closeChartModal(); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeChartModal(); });
+  wireChartZoom();
+  loadConfig();
   loadMe();
   loadLeaderboard();
 
