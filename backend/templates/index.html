@@ -103,6 +103,35 @@
         </div>
       </div>
 
+      <!-- Ideal delivery (ElevenLabs TTS) — revealed only when configured -->
+      <div class="card hidden" id="idealCard">
+        <h2>🔊 Hear how it could sound</h2>
+        <p class="muted">
+          An AI-polished take on <em>your</em> talk — fillers trimmed, phrasing
+          tightened — read back in a clear, well-paced voice. Generated only when
+          you ask, and sends your transcript text to ElevenLabs.
+        </p>
+        <p class="muted small">
+          💡 <b>Click sentences below</b> to improve just that part of your talk —
+          or leave them unselected to redo the whole thing. (Improving a shorter
+          part is faster.)
+        </p>
+        <div id="idealPicker" class="ideal-picker"></div>
+        <div class="ideal-controls">
+          <span id="idealSelInfo" class="muted small">Improving: whole talk</span>
+          <button type="button" class="linkbtn hidden" id="idealClear">Clear selection</button>
+        </div>
+        <button class="btn primary ideal-btn" id="idealBtn">▶ Generate ideal delivery</button>
+        <span id="idealStatus" class="muted"></span>
+        <div id="idealOutput" class="hidden">
+          <audio id="idealAudio" controls></audio>
+          <details class="ideal-script">
+            <summary>Show the improved script</summary>
+            <p id="idealScript" class="transcript"></p>
+          </details>
+        </div>
+      </div>
+
       <!-- Charts -->
       <div class="card">
         <h2>Visualizations <span class="muted" style="font-weight:400;font-size:.6em">(click any chart to enlarge)</span></h2>
