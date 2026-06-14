@@ -106,6 +106,7 @@
     renderCharts(d);
     renderContent(d.content);
     renderLanguage(d.language);
+    renderIdealDelivery(d);
     $("transcript").textContent = d.transcript || "";
     $("warnings").textContent = (d.warnings || []).join("  ·  ");
   }
@@ -201,6 +202,127 @@
       </div>`;
     $("languageDetails").innerHTML = left + right;
   }
+
+  // ---- Ideal delivery (ElevenLabs TTS) -------------------------------------
+  let idealTranscript = "";
+  let idealSentences = [];
+  let idealSelected = new Set();
+
+  // Split into sentences for click-to-select. The lookahead requires whitespace
+  // or end-of-text after the terminator so decimals ("12.5") aren't split.
+  function splitSentences(text) {
+    return (text.match(/[\s\S]*?[.!?]+(?=\s|$)|[\s\S]+$/g) || [text])
+      .map((s) => s.trim()).filter(Boolean);
+  }
+
+  function renderIdealDelivery(d) {
+    resetIdeal();
+    idealTranscript = d.transcript || "";
+    idealSentences = idealTranscript ? splitSentences(idealTranscript) : [];
+    idealSelected = new Set();
+    renderIdealPicker();
+    updateIdealSelInfo();
+    // Optional, opt-in cloud feature: only surface it when the server has an
+    // ElevenLabs key configured. Otherwise stay fully local and hide the card.
+    $("idealCard").classList.toggle("hidden",
+      !(d.ideal_delivery_available && idealTranscript));
+  }
+
+  // Render the transcript as clickable sentences so the user can improve a part.
+  function renderIdealPicker() {
+    const picker = $("idealPicker");
+    picker.innerHTML = "";
+    idealSentences.forEach((s, i) => {
+      const span = document.createElement("span");
+      span.className = "sent";
+      span.textContent = s + " ";
+      span.addEventListener("click", () => {
+        if (idealSelected.has(i)) { idealSelected.delete(i); span.classList.remove("selected"); }
+        else { idealSelected.add(i); span.classList.add("selected"); }
+        updateIdealSelInfo();
+      });
+      picker.appendChild(span);
+    });
+  }
+
+  // Selected sentences, joined back in their original order.
+  function idealSelectedText() {
+    return [...idealSelected].sort((a, b) => a - b).map((i) => idealSentences[i]).join(" ");
+  }
+
+  function updateIdealSelInfo() {
+    const n = idealSelected.size;
+    if (!n) {
+      $("idealSelInfo").textContent = "Improving: whole talk";
+      hide("idealClear");
+    } else {
+      const words = idealSelectedText().split(/\s+/).filter(Boolean).length;
+      $("idealSelInfo").textContent =
+        `Improving: ${n} selected sentence${n > 1 ? "s" : ""} (~${words} words)`;
+      show("idealClear");
+    }
+  }
+
+  function resetIdeal() {
+    hide("idealOutput");
+    $("idealStatus").textContent = "";
+    $("idealScript").textContent = "";
+    const audio = $("idealAudio");
+    audio.pause();
+    audio.removeAttribute("src");
+    audio.load();
+    const btn = $("idealBtn");
+    btn.disabled = false;
+    btn.textContent = "▶ Generate ideal delivery";
+  }
+
+  async function generateIdeal() {
+    const text = idealSelected.size ? idealSelectedText() : idealTranscript;
+    if (!text) return;
+    const btn = $("idealBtn");
+    btn.disabled = true;
+    const scope = idealSelected.size ? "selected part" : "whole talk";
+    $("idealStatus").textContent = ` Rewriting the ${scope} and synthesizing… this can take a few seconds.`;
+    try {
+      const r = await fetch("/api/ideal-delivery", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ transcript: text }),
+      });
+      const d = await r.json();
+      if (!r.ok || d.error) {
+        $("idealStatus").textContent = " " + (d.error || `Request failed (${r.status}).`);
+        btn.disabled = false;
+        return;
+      }
+      $("idealScript").textContent = d.script || "";
+      const audio = $("idealAudio");
+      const fromHeuristic = (d.method || "").startsWith("heuristic");
+      if (d.audio) {
+        audio.src = d.audio;
+        audio.classList.remove("hidden");
+        $("idealStatus").textContent = fromHeuristic
+          ? " Ready — script cleaned without the LLM (start Ollama for a fuller rewrite)."
+          : " Ready — press play.";
+      } else {
+        audio.classList.add("hidden");
+        $("idealStatus").textContent = " " + (d.audio_error || d.note || "Script ready (no audio).");
+      }
+      show("idealOutput");
+      btn.textContent = "↻ Regenerate";
+      btn.disabled = false;
+    } catch (err) {
+      $("idealStatus").textContent = " Network error: " + err.message;
+      btn.disabled = false;
+    }
+  }
+
+  $("idealBtn").addEventListener("click", generateIdeal);
+  $("idealClear").addEventListener("click", () => {
+    idealSelected.clear();
+    $("idealPicker").querySelectorAll(".sent.selected").forEach((s) => s.classList.remove("selected"));
+    updateIdealSelInfo();
+  });
 
   // ---- Charts --------------------------------------------------------------
   function destroyCharts() {

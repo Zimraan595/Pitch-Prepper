@@ -199,6 +199,53 @@ or point `MONGO_URI` at a free MongoDB Atlas cluster. Then set a real `SECRET_KE
 
 ---
 
+## 🔊 Hear how it could sound (optional)
+
+After an analysis, a **"Hear how it could sound"** card can render a polished take
+on *your* talk: a local LLM rewrites your transcript — fillers trimmed, phrasing
+tightened, your meaning and first-person voice kept — and [ElevenLabs](https://elevenlabs.io)
+reads it back in a clear, well-paced voice. It's your own words, delivered well.
+
+You can **click sentences in the card to improve just one part** of your talk
+(say, only your conclusion) instead of the whole thing — leave them unselected to
+redo everything. Improving a shorter selection is also noticeably faster, since
+the rewrite time scales with length.
+
+> ⚠️ **This is the one feature that leaves your machine.** Everything else runs
+> locally; this sends your transcript text to ElevenLabs' API. So it's **off by
+> default and opt-in**: the card only appears when you set an API key, and audio
+> is generated **only when you click the button** — never during a normal analysis.
+
+```powershell
+$env:ELEVENLABS_API_KEY = "sk_your_key_here"   # get one at elevenlabs.io
+python app.py
+```
+
+The LLM rewrite uses a small local Ollama model — **`llama3.2:3b`** by default
+(`ollama pull llama3.2:3b`), separate from the `llama3.1` used for content
+analysis. The rewrite scales with transcript length, so a smaller model is far
+faster on long talks (~2.4× in local testing) while cleaning up filler just as
+well. It falls back to a simple filler-stripping pass if Ollama isn't running, so
+the *rewrite* stays local even when the *voice* doesn't. Override with
+`IDEAL_REWRITE_MODEL`.
+
+### Choosing a voice (and the free-tier gotcha)
+
+On the **free ElevenLabs API tier you cannot use the shared "library"/premade
+voices** (Rachel, etc.) — the API returns `HTTP 402 payment_required`. You must
+synthesize with a voice **you own**. The free tier lets you make one: go to
+[elevenlabs.io](https://elevenlabs.io) → **VoiceLab → Instant Voice Clone** (a
+~1-minute recording of your own voice — which is perfect here: you'll hear the
+improved script in *your* voice). Then either:
+
+- leave `ELEVENLABS_VOICE_ID` unset — the app auto-picks one of your own voices, or
+- set `ELEVENLABS_VOICE_ID` to a specific voice. List the IDs your account can use
+  at **`GET /api/voices`** (or in VoiceLab).
+
+Paid plans can use the built-in library voices directly, so any `ELEVENLABS_VOICE_ID` works.
+
+---
+
 ## ⚙️ Configuration (optional)
 
 Everything works out of the box, but you can tune behavior with environment
@@ -212,10 +259,15 @@ variables. In PowerShell, set one with `$env:NAME = "value"` before `python app.
 | `WHISPERX_DEVICE` | `auto` | `auto`·`cpu`·`cuda`. Use `cuda` if you have a compatible NVIDIA GPU. |
 | `WHISPERX_COMPUTE_TYPE` | auto | e.g. `int8` (CPU) or `float16` (GPU). |
 | `LLM_MODEL` | `llama3.1` | Which Ollama model to use for content analysis. |
+| `IDEAL_REWRITE_MODEL` | `llama3.2:3b` | Smaller/faster Ollama model used **only** for the "Hear how it could sound" rewrite. The rewrite scales with transcript length, so an 8B model is slow on long talks; a 3B model cleans up just as well. Run `ollama pull llama3.2:3b`. |
 | `OLLAMA_HOST` | `http://localhost:11434` | Where Ollama is listening. |
 | `MONGO_URI` | `mongodb://localhost:27017` | MongoDB connection for accounts & leaderboard. |
 | `MONGO_DB_NAME` | `presentation_helper` | Database name to use. |
 | `SECRET_KEY` | `dev-insecure-change-me` | Signs login session cookies — **set a real value in production.** |
+| `ELEVENLABS_API_KEY` | *(unset)* | Enables the optional **"Hear how it could sound"** playback. When unset, the feature is hidden and nothing is ever sent off-machine. |
+| `ELEVENLABS_VOICE_ID` | *(auto)* | Voice that reads the polished script. Leave unset to auto-pick a voice you own from your account. **Free API tier:** you must use your own voice — see the note below. |
+| `ELEVENLABS_MODEL` | `eleven_multilingual_v2` | ElevenLabs text-to-speech model. |
+| `IDEAL_DELIVERY_MAX_CHARS` | `5000` | Caps the transcript length sent for rewrite + synthesis (latency / credit control). |
 | `PORT` | `5000` | Port the web app runs on. |
 
 **Tip:** on a CPU-only machine, `WHISPER_MODEL=tiny` or `small` makes analysis
@@ -225,7 +277,7 @@ noticeably faster.
 
 ## 👩‍💻 For developers
 
-**Tech stack:** Flask (single-file backend `app.py`) · WhisperX · Librosa · Ollama / Llama 3.1 (local) · HTML/CSS/JS · Chart.js
+**Tech stack:** Flask (single-file backend `app.py`) · WhisperX · Librosa · Ollama / Llama 3.1 (local) · ElevenLabs (optional TTS) · HTML/CSS/JS · Chart.js
 
 **Architecture.** The backend is intentionally one file with a **modular** structure:
 each analyzer (`analyze_speaking_rate`, `analyze_pitch`, `analyze_volume`,
@@ -243,6 +295,8 @@ unavailable, that analyzer is skipped with a warning rather than crashing the re
 | GET    | `/`         | Dashboard UI                                 |
 | GET    | `/health`   | Status + which models/services are configured (incl. `db_available`) |
 | POST   | `/analyze`  | `multipart/form-data` field `audio` → results JSON (records to leaderboard if logged in) |
+| POST   | `/api/ideal-delivery` | `{transcript}` → polished script + (if ElevenLabs is configured) base64 MP3 audio |
+| GET    | `/api/voices` | ElevenLabs voices available to the configured account (id, name, category) |
 | POST   | `/api/register` | `{username, email?, password}` → create account + log in |
 | POST   | `/api/login`    | `{username, password}` → start a session |
 | POST   | `/api/logout`   | End the session |
