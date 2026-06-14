@@ -31,6 +31,7 @@ import json
 import math
 import time
 import uuid
+import hashlib
 import shutil
 import datetime
 import threading
@@ -1591,6 +1592,14 @@ _HEURISTIC_FILLERS = {"um", "uh", "uhm", "er", "ah", "hmm", "mm", "mhm"}
 
 _resolved_voice_id = None
 
+# Cache successful rewrite+synthesis results by transcript content, so repeated
+# clicks of "hear how it could sound" on the same transcript (rehearsal + the
+# live demo) don't re-spend ElevenLabs credits or re-incur latency. In-memory
+# only — lost on restart, which is fine. Only fully successful syntheses are
+# cached (see api_ideal_delivery), so a transient API failure is never stuck.
+_ideal_cache: dict = {}
+_ideal_cache_lock = threading.Lock()
+
 
 def elevenlabs_available() -> bool:
     """True only if an ElevenLabs API key is configured."""
@@ -1918,7 +1927,16 @@ def api_ideal_delivery():
     if not transcript:
         return jsonify({"error": "No transcript provided."}), 400
 
-    improved = improve_script(transcript[:IDEAL_DELIVERY_MAX_CHARS])
+    # Serve an identical transcript from cache (same text the rewrite+synthesis
+    # was already produced for) to avoid re-spending ElevenLabs credits/latency.
+    trimmed = transcript[:IDEAL_DELIVERY_MAX_CHARS]
+    cache_key = hashlib.sha256(trimmed.encode("utf-8")).hexdigest()
+    with _ideal_cache_lock:
+        cached = _ideal_cache.get(cache_key)
+    if cached is not None:
+        return jsonify({**cached, "cached": True})
+
+    improved = improve_script(trimmed)
     script = improved.get("script") or ""
     result = {
         "script": script,
@@ -1939,6 +1957,11 @@ def api_ideal_delivery():
     except Exception as exc:
         # Keep the rewritten script even if synthesis fails (bad key, quota, etc.).
         result["audio_error"] = str(exc)
+    # Cache only a fully successful synthesis — never a result that errored, so a
+    # transient failure (quota, network) isn't served forever from cache.
+    if result.get("audio") and not result.get("audio_error"):
+        with _ideal_cache_lock:
+            _ideal_cache[cache_key] = result
     return jsonify(result)
 
 
@@ -1978,6 +2001,23 @@ _analysis_pool = concurrent.futures.ThreadPoolExecutor(
 # Keep finished jobs around briefly so a dropped status poll can be retried.
 JOB_RETENTION_SEC = int(os.environ.get("JOB_RETENTION_SEC", "900"))
 
+# Cache completed analyses by audio file content, so re-uploading the same file
+# (e.g. replaying your prepared demo clip) returns instantly instead of re-running
+# minutes of transcription + LLM + audio analysis. Safe because the analysis is
+# deterministic (LLM_SEED=0, temperature 0): a cached result is identical to a
+# fresh one. In-memory only — lost on restart, which is fine for a demo.
+_upload_cache: dict = {}             # sha256(file bytes) -> analysis result dict
+_upload_cache_lock = threading.Lock()
+
+
+def _hash_file(path: str) -> str:
+    """SHA-256 of a file's bytes, read in chunks (uploads can be large)."""
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
 
 def _prune_jobs():
     cutoff = time.time() - JOB_RETENTION_SEC
@@ -1987,11 +2027,17 @@ def _prune_jobs():
             _analysis_jobs.pop(jid, None)
 
 
-def _run_analysis_job(job_id: str, audio_path: str, user_id):
+def _run_analysis_job(job_id: str, audio_path: str, user_id, file_hash=None):
     """Run the analysis off the request thread and stash the outcome by job id."""
     try:
         result = run_analysis(audio_path)
         if "error" not in result:
+            # Cache the successful analysis by file content (before adding the
+            # per-user leaderboard flag), so an identical re-upload is served
+            # instantly and each cache hit still records freshly for its user.
+            if file_hash:
+                with _upload_cache_lock:
+                    _upload_cache[file_hash] = dict(result)
             # Logged-in users automatically get their score on the leaderboard.
             saved = _record_result(result, user_id=user_id)
             result["saved_to_leaderboard"] = saved is not None
@@ -2040,10 +2086,32 @@ def analyze():
     user_id = session.get("user_id")
     _prune_jobs()
     job_id = uuid.uuid4().hex
+
+    # If we've already analyzed this exact file, return the cached result as an
+    # immediately-done job — but still record it for whoever is logged in now, so
+    # the leaderboard updates exactly as a fresh run would.
+    file_hash = _hash_file(tmp.name)
+    with _upload_cache_lock:
+        cached = _upload_cache.get(file_hash)
+    if cached is not None:
+        result = dict(cached)
+        saved = _record_result(result, user_id=user_id)
+        result["saved_to_leaderboard"] = saved is not None
+        result["cached"] = True
+        with _analysis_jobs_lock:
+            _analysis_jobs[job_id] = {
+                "state": "done", "result": result, "done_at": time.time(),
+            }
+        try:
+            os.unlink(tmp.name)
+        except OSError:
+            pass
+        return jsonify({"job_id": job_id}), 202
+
     with _analysis_jobs_lock:
         _analysis_jobs[job_id] = {"state": "processing", "done_at": None}
     # The background job owns the temp file from here and deletes it when done.
-    _analysis_pool.submit(_run_analysis_job, job_id, tmp.name, user_id)
+    _analysis_pool.submit(_run_analysis_job, job_id, tmp.name, user_id, file_hash)
     return jsonify({"job_id": job_id}), 202
 
 
