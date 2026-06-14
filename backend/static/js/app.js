@@ -98,9 +98,15 @@
       } else if (result.error) {
         showError(result.error);
       } else {
-        render(result);
-        show("results");
-        handleSaved(result);
+        // Keep rendering errors distinct from network errors — a bug while
+        // drawing results shouldn't be reported as "Network error".
+        try {
+          render(result);
+          show("results");
+          handleSaved(result);
+        } catch (e) {
+          showError("Couldn't display the results: " + e.message);
+        }
       }
     } catch (err) {
       hide("loading");
@@ -449,14 +455,28 @@
     },
   };
 
+  // Deep-clone a Chart.js config. Unlike structuredClone, this passes functions
+  // (Chart.js callbacks) through by reference instead of throwing DataCloneError.
+  function cloneConfig(value) {
+    if (Array.isArray(value)) return value.map(cloneConfig);
+    if (value && typeof value === "object") {
+      const out = {};
+      for (const k in value) out[k] = cloneConfig(value[k]);
+      return out;
+    }
+    return value; // primitives and functions: shared by reference
+  }
+
   // Create a chart and remember its config so it can be re-rendered, enlarged,
   // in the click-to-zoom modal.
   function mkChart(id, config) {
-    // Store a pristine deep copy BEFORE Chart.js mutates `config` (it attaches
-    // internal, non-cloneable state). Cloning the mutated object later would
-    // throw DataCloneError and silently break click-to-enlarge.
-    chartConfigs[id] = structuredClone(config);
-    return new Chart($(id), config);
+    // Keep a pristine copy for the enlarge-modal, and hand Chart.js its OWN copy
+    // to mutate. Several charts share `baseOpts` by reference; if Chart.js
+    // mutates it (it injects default tick callback functions), the next chart's
+    // config would carry those functions and break cloning. Cloning what we give
+    // Chart.js keeps the shared options pristine.
+    chartConfigs[id] = cloneConfig(config);
+    return new Chart($(id), cloneConfig(config));
   }
 
   function renderCharts(d) {
@@ -628,7 +648,7 @@
   function openChartModal(canvasId, title) {
     const cfg = chartConfigs[canvasId];
     if (!cfg) return;
-    const clone = structuredClone(cfg); // configs hold only plain data
+    const clone = cloneConfig(cfg);
     clone.options = Object.assign({}, clone.options, {
       responsive: true,
       maintainAspectRatio: false,
