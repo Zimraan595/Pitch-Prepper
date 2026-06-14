@@ -440,14 +440,20 @@
     charts = {};
   }
 
-  const baseOpts = {
+  // Returns a FRESH options object each call. This must be a factory, not a
+  // shared object: Chart.js mutates the options it's given (it injects default
+  // tick callbacks — functions — into the scales). If charts shared one object,
+  // that pollution would leak, and mkChart's structuredClone(config) for the
+  // next chart would throw "function … could not be cloned". A fresh object per
+  // chart keeps each config independent and clone-safe.
+  const baseOpts = () => ({
     responsive: true,
     plugins: { legend: { display: false } },
     scales: {
       x: { ticks: { color: "#8b93a7" }, grid: { color: "#2a3346" } },
       y: { ticks: { color: "#8b93a7" }, grid: { color: "#2a3346" } },
     },
-  };
+  });
 
   // Create a chart and remember its config so it can be re-rendered, enlarged,
   // in the click-to-zoom modal.
@@ -486,7 +492,7 @@
           },
         ],
       },
-      options: baseOpts,
+      options: baseOpts(),
     });
 
     // Pitch
@@ -504,7 +510,7 @@
           },
         ],
       },
-      options: baseOpts,
+      options: baseOpts(),
     });
 
     // Volume
@@ -524,7 +530,7 @@
           },
         ],
       },
-      options: baseOpts,
+      options: baseOpts(),
     });
 
     // Pause timeline (scatter: time vs duration, colored by type)
@@ -547,7 +553,7 @@
           },
         ],
       },
-      options: Object.assign({}, baseOpts, {
+      options: Object.assign(baseOpts(), {
         scales: {
           x: {
             title: { display: true, text: "time (s)", color: "#8b93a7" },
