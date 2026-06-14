@@ -355,7 +355,10 @@
   // Create a chart and remember its config so it can be re-rendered, enlarged,
   // in the click-to-zoom modal.
   function mkChart(id, config) {
-    chartConfigs[id] = config;
+    // Store a pristine deep copy BEFORE Chart.js mutates `config` (it attaches
+    // internal, non-cloneable state). Cloning the mutated object later would
+    // throw DataCloneError and silently break click-to-enlarge.
+    chartConfigs[id] = structuredClone(config);
     return new Chart($(id), config);
   }
 
@@ -424,16 +427,30 @@
       }),
     });
 
-    // Filler words bar — top 5 most frequent, highest first.
-    // by_word arrives already sorted desc (Counter.most_common), so slice 5.
-    const fillerTop = Object.entries(dl.fillers.by_word || {}).slice(0, 5);
+    // Filler words bar — top 5 most frequent, highest first. Sort explicitly
+    // (desc by count) so order is never ambiguous, and force whole-number ticks
+    // (counts are integers — no 0.5 gridlines).
+    const fillerTop = Object.entries(dl.fillers.by_word || {})
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5);
     charts.filler = mkChart("fillerChart", {
       type: "bar",
       data: {
         labels: fillerTop.map(([w]) => w),
         datasets: [{ data: fillerTop.map(([, c]) => c), backgroundColor: "#f87272" }],
       },
-      options: baseOpts,
+      options: {
+        responsive: true,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { ticks: { color: "#8b93a7" }, grid: { color: "#2a3346" } },
+          y: {
+            beginAtZero: true,
+            ticks: { color: "#8b93a7", precision: 0, stepSize: 1 },
+            grid: { color: "#2a3346" },
+          },
+        },
+      },
     });
 
     // Content radar
