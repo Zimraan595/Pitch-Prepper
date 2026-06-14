@@ -30,6 +30,7 @@ import re
 import json
 import math
 import time
+import uuid
 import shutil
 import datetime
 import threading
@@ -1489,9 +1490,10 @@ def db_available() -> bool:
     return ok
 
 
-def current_user():
-    """Return the logged-in user document, or None."""
-    uid = session.get("user_id")
+def _user_by_id(uid):
+    """Load a user document by id string, or None. Unlike current_user() this
+    needs no request context, so background analysis jobs can use it to attribute
+    a result to the user who submitted it (captured at submit time)."""
     if not uid:
         return None
     db = get_db()
@@ -1502,6 +1504,11 @@ def current_user():
         return db.users.find_one({"_id": ObjectId(uid)})
     except Exception:
         return None
+
+
+def current_user():
+    """Return the logged-in user document, or None."""
+    return _user_by_id(session.get("user_id"))
 
 
 def _public_user(user):
@@ -1523,13 +1530,16 @@ def login_required(fn):
     return wrapper
 
 
-def _record_result(result: dict):
-    """Persist a completed analysis to the leaderboard for the logged-in user.
+def _record_result(result: dict, user_id=None):
+    """Persist a completed analysis to the leaderboard for the given user.
+
+    `user_id` is captured at request time and passed in explicitly, because the
+    analysis runs in a background thread that has no Flask session to read.
 
     Returns the saved overall score, or None if not saved (anonymous user,
     DB unavailable, or no score).
     """
-    user = current_user()
+    user = _user_by_id(user_id)
     if not user:
         return None
     db = get_db()
@@ -1944,6 +1954,61 @@ def api_voices():
         return jsonify({"error": f"Could not list voices: {exc}", "voices": []}), 200
 
 
+# ---------------------------------------------------------------------------
+# Background analysis jobs
+# ---------------------------------------------------------------------------
+#
+# Analysis takes a long time (cold model load + transcription can run for
+# minutes). Holding a single HTTP request open that whole time is unreliable:
+# browsers, proxies, and OS network stacks drop stalled connections, which the
+# frontend then reports as a "network error" even though the server finishes and
+# logs a 200. So /analyze hands the work to a background thread and returns a job
+# id immediately; the client polls /analyze/status/<id> with short requests that
+# never stay open long enough to drop.
+
+_analysis_jobs: dict = {}            # job_id -> {state, result?/error?, done_at}
+_analysis_jobs_lock = threading.Lock()
+_analysis_pool = concurrent.futures.ThreadPoolExecutor(
+    max_workers=int(os.environ.get("ANALYSIS_WORKERS", "2")),
+    thread_name_prefix="analysis",
+)
+# Keep finished jobs around briefly so a dropped status poll can be retried.
+JOB_RETENTION_SEC = int(os.environ.get("JOB_RETENTION_SEC", "900"))
+
+
+def _prune_jobs():
+    cutoff = time.time() - JOB_RETENTION_SEC
+    with _analysis_jobs_lock:
+        for jid in [j for j, v in _analysis_jobs.items()
+                    if v.get("done_at") and v["done_at"] < cutoff]:
+            _analysis_jobs.pop(jid, None)
+
+
+def _run_analysis_job(job_id: str, audio_path: str, user_id):
+    """Run the analysis off the request thread and stash the outcome by job id."""
+    try:
+        result = run_analysis(audio_path)
+        if "error" not in result:
+            # Logged-in users automatically get their score on the leaderboard.
+            saved = _record_result(result, user_id=user_id)
+            result["saved_to_leaderboard"] = saved is not None
+        outcome = {"state": "done", "result": result}
+    except RuntimeError as exc:  # missing Whisper, etc.
+        outcome = {"state": "error", "error": str(exc)}
+    except FileNotFoundError:  # ffmpeg (or another required binary) not on PATH
+        outcome = {"state": "error", "error": FFMPEG_MISSING_MSG}
+    except Exception as exc:  # pragma: no cover
+        outcome = {"state": "error", "error": f"Analysis failed: {exc}"}
+    finally:
+        try:
+            os.unlink(audio_path)
+        except OSError:
+            pass
+    outcome["done_at"] = time.time()
+    with _analysis_jobs_lock:
+        _analysis_jobs[job_id] = outcome
+
+
 @app.route("/analyze", methods=["POST"])
 def analyze():
     if "audio" not in request.files:
@@ -1961,24 +2026,42 @@ def analyze():
     try:
         f.save(tmp.name)
         tmp.close()
-        result = run_analysis(tmp.name)
-        if "error" not in result:
-            # Logged-in users automatically get their score on the leaderboard.
-            saved = _record_result(result)
-            result["saved_to_leaderboard"] = saved is not None
-        status = 200 if "error" not in result else 422
-        return jsonify(result), status
-    except RuntimeError as exc:  # missing Whisper, etc.
-        return jsonify({"error": str(exc)}), 503
-    except FileNotFoundError:  # ffmpeg (or another required binary) not on PATH
-        return jsonify({"error": FFMPEG_MISSING_MSG}), 503
-    except Exception as exc:  # pragma: no cover
-        return jsonify({"error": f"Analysis failed: {exc}"}), 500
-    finally:
+    except Exception as exc:
         try:
             os.unlink(tmp.name)
         except OSError:
             pass
+        return jsonify({"error": f"Could not read upload: {exc}"}), 400
+
+    # Capture the user now — the background thread has no request/session context.
+    user_id = session.get("user_id")
+    _prune_jobs()
+    job_id = uuid.uuid4().hex
+    with _analysis_jobs_lock:
+        _analysis_jobs[job_id] = {"state": "processing", "done_at": None}
+    # The background job owns the temp file from here and deletes it when done.
+    _analysis_pool.submit(_run_analysis_job, job_id, tmp.name, user_id)
+    return jsonify({"job_id": job_id}), 202
+
+
+@app.route("/analyze/status/<job_id>")
+def analyze_status(job_id):
+    """Report on a background analysis job. The client polls this until it's
+    'done' (full result attached) or 'error'."""
+    with _analysis_jobs_lock:
+        job = _analysis_jobs.get(job_id)
+        snapshot = dict(job) if job else None
+    if snapshot is None:
+        return jsonify({
+            "state": "unknown",
+            "error": "Analysis job not found — it may have expired. Please try again.",
+        }), 404
+    state = snapshot.get("state")
+    if state == "done":
+        return jsonify({"state": "done", "result": snapshot.get("result")}), 200
+    if state == "error":
+        return jsonify({"state": "error", "error": snapshot.get("error")}), 200
+    return jsonify({"state": "processing"}), 200
 
 
 # Always return JSON (not Flask's HTML error pages) so the frontend's
