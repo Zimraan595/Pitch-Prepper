@@ -1,4 +1,4 @@
-"""Presentation Helper — single-file Flask backend.
+"""Pitch Prepper — single-file Flask backend.
 
 A presentation coaching web application. A user uploads or records a
 presentation audio file; the app transcribes it (Whisper), analyzes delivery
