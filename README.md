@@ -43,8 +43,10 @@ Check with `python --version`. If you don't have it, get it from
 [python.org](https://www.python.org/downloads/) (tick *"Add Python to PATH"* during install).
 
 #### b) ffmpeg  ← **required, this is the #1 thing people miss**
-The app uses `ffmpeg` to read your audio. Without it, every analysis fails with
-`Analysis failed: [WinError 2] The system cannot find the file specified`.
+The app uses `ffmpeg` to read your audio. Without it, transcription can't start and
+every analysis fails with `ffmpeg was not found on PATH. Whisper needs the ffmpeg
+binary to decode audio…`. (The app checks for it up front and prints that
+actionable message instead of the raw Windows `[WinError 2]`.)
 
 ```powershell
 winget install Gyan.FFmpeg.Essentials
@@ -165,13 +167,13 @@ with specific feedback on how to raise it.
 <tr><th>What you see</th><th>What it means & how to fix it</th></tr>
 
 <tr>
-<td><code>Analysis failed: [WinError 2] The system cannot find the file specified</code></td>
-<td><b>ffmpeg isn't installed or isn't on your PATH.</b> Install it (<code>winget install Gyan.FFmpeg.Essentials</code>) and then <b>open a NEW terminal</b> before running the app again.</td>
+<td><code>ffmpeg was not found on PATH. Whisper needs the ffmpeg binary to decode audio…</code> (older builds showed the raw <code>[WinError 2]</code>)</td>
+<td><b>ffmpeg isn't installed or isn't on your PATH.</b> Install it (<code>winget install Gyan.FFmpeg.Essentials</code>) and then <b>open a NEW terminal</b> before running the app again. Quick check: open <code>http://localhost:5000/health</code> — the <code>ffmpeg_found</code> field tells you whether the <i>running</i> server can actually see it.</td>
 </tr>
 
 <tr>
-<td>Still <code>[WinError 2]</code> even though you just installed ffmpeg</td>
-<td>You're in a terminal that started <i>before</i> the install, so it has a stale PATH. <b>Close it, open a new one</b>, confirm with <code>ffmpeg -version</code>, then <code>python app.py</code> again.</td>
+<td>Still <code>ffmpeg was not found on PATH</code> even though you just installed ffmpeg</td>
+<td>You're in a terminal (or app) that started <i>before</i> the install, so it has a stale PATH. <b>Close it and open a brand-new one</b>, confirm with <code>ffmpeg -version</code>, then <code>python app.py</code> again. <b>VS Code gotcha:</b> integrated terminals inherit VS Code's <i>own</i> environment, so if you installed ffmpeg after opening VS Code, a new terminal tab still won't see it — fully quit and reopen VS Code (not just the tab).</td>
 </tr>
 
 <tr>
