@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Pitch Prepper - Authentication</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&amp;family=Inter:wght@400;500;600&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "secondary": "#006c49",
+                        "on-surface": "#1b1b24",
+                        "on-tertiary-fixed": "#2a1700",
+                        "surface-container-highest": "#e4e1ee",
+                        "outline-variant": "#c7c4d8",
+                        "secondary-fixed": "#6ffbbe",
+                        "inverse-on-surface": "#f3effc",
+                        "primary-fixed": "#e2dfff",
+                        "surface-variant": "#e4e1ee",
+                        "surface-bright": "#fcf8ff",
+                        "on-primary": "#ffffff",
+                        "secondary-container": "#6cf8bb",
+                        "on-tertiary": "#ffffff",
+                        "on-secondary-fixed": "#002113",
+                        "inverse-surface": "#302f39",
+                        "surface-container-high": "#eae6f4",
+                        "tertiary-fixed-dim": "#ffb95f",
+                        "on-tertiary-fixed-variant": "#653e00",
+                        "surface-container-low": "#f5f2ff",
+                        "outline": "#777587",
+                        "on-error": "#ffffff",
+                        "on-primary-fixed-variant": "#3323cc",
+                        "secondary-fixed-dim": "#4edea3",
+                        "on-background": "#1b1b24",
+                        "on-error-container": "#93000a",
+                        "on-surface-variant": "#464555",
+                        "background": "#fcf8ff",
+                        "primary-container": "#4f46e5",
+                        "on-secondary": "#ffffff",
+                        "inverse-primary": "#c3c0ff",
+                        "surface-tint": "#4d44e3",
+                        "primary": "#3525cd",
+                        "tertiary-container": "#885500",
+                        "error": "#ba1a1a",
+                        "on-primary-container": "#dad7ff",
+                        "surface-container": "#f0ecf9",
+                        "tertiary-fixed": "#ffddb8",
+                        "on-secondary-fixed-variant": "#005236",
+                        "on-primary-fixed": "#0f0069",
+                        "surface-container-lowest": "#ffffff",
+                        "surface": "#fcf8ff",
+                        "on-tertiary-container": "#ffd4a4",
+                        "tertiary": "#684000",
+                        "error-container": "#ffdad6",
+                        "surface-dim": "#dcd8e5",
+                        "primary-fixed-dim": "#c3c0ff",
+                        "on-secondary-container": "#00714d"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    "spacing": {
+                        "gutter": "1.5rem",
+                        "margin-desktop": "2rem",
+                        "container-max": "1280px",
+                        "stack-lg": "2rem",
+                        "stack-sm": "0.5rem",
+                        "stack-md": "1rem",
+                        "margin-mobile": "1rem"
+                    },
+                    "fontFamily": {
+                        "label-md": ["Geist"],
+                        "body-md": ["Inter"],
+                        "headline-md": ["Geist"],
+                        "metric-xl": ["Geist"],
+                        "headline-lg-mobile": ["Geist"],
+                        "headline-lg": ["Geist"],
+                        "body-lg": ["Inter"]
+                    },
+                    "fontSize": {
+                        "label-md": ["12px", { "lineHeight": "16px", "letterSpacing": "0.05em", "fontWeight": "500" }],
+                        "body-md": ["14px", { "lineHeight": "20px", "fontWeight": "400" }],
+                        "headline-md": ["20px", { "lineHeight": "28px", "fontWeight": "600" }],
+                        "metric-xl": ["48px", { "lineHeight": "48px", "letterSpacing": "-0.04em", "fontWeight": "700" }],
+                        "headline-lg-mobile": ["24px", { "lineHeight": "32px", "letterSpacing": "-0.01em", "fontWeight": "600" }],
+                        "headline-lg": ["32px", { "lineHeight": "40px", "letterSpacing": "-0.02em", "fontWeight": "600" }],
+                        "body-lg": ["16px", { "lineHeight": "24px", "fontWeight": "400" }]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+    </style>
+</head>
+<body class="bg-background min-h-screen font-body-md text-on-surface antialiased flex items-center justify-center p-4">
+<!-- Modal Overlay -->
+<div class="fixed inset-0 bg-inverse-surface/40 backdrop-blur-sm z-40 transition-opacity"></div>
+<!-- Modal Container -->
+<div class="relative w-full max-w-md bg-surface rounded-xl shadow-md border border-outline-variant z-50 overflow-hidden transform transition-all duration-300">
+<!-- Close Button -->
+<button aria-label="Close modal" class="absolute top-4 right-4 text-on-surface-variant hover:text-on-surface transition-colors p-1 rounded-full hover:bg-surface-variant z-10">
+<span class="material-symbols-outlined text-xl">close</span>
+</button>
+<!-- Header / Branding -->
+<div class="pt-8 px-8 pb-4 text-center">
+<div class="w-12 h-12 bg-primary-container text-on-primary-container rounded-lg mx-auto flex items-center justify-center mb-4 shadow-sm">
+<span class="material-symbols-outlined text-2xl" style="font-variation-settings: 'FILL' 1;">mic_double</span>
+</div>
+<h2 class="font-headline-md text-headline-md text-primary mb-1">Pitch Prepper</h2>
+<p class="font-body-md text-body-md text-on-surface-variant">Access your AI speaking coach</p>
+</div>
+<!-- Tab Navigation -->
+<div class="flex border-b border-outline-variant px-8 mb-6">
+<button class="flex-1 py-3 text-center font-label-md text-label-md text-primary border-b-2 border-primary transition-colors focus:outline-none" id="tab-login" onclick="switchTab('login')">
+                Log in
+            </button>
+<button class="flex-1 py-3 text-center font-label-md text-label-md text-on-surface-variant border-b-2 border-transparent hover:text-primary transition-colors focus:outline-none" id="tab-signup" onclick="switchTab('signup')">
+                Sign up
+            </button>
+</div>
+<!-- Error Message Area (Hidden by default) -->
+<div class="hidden mx-8 mb-6 p-3 rounded-lg bg-error-container border border-error/20 flex items-start gap-2" id="error-message">
+<span class="material-symbols-outlined text-error text-sm mt-0.5" style="font-variation-settings: 'FILL' 1;">error</span>
+<p class="font-label-md text-label-md text-on-error-container">Incorrect username or password. Please try again.</p>
+</div>
+<div class="px-8 pb-8 relative overflow-hidden">
+<!-- Login Form -->
+<form class="space-y-4 transition-all duration-300 transform translate-x-0 opacity-100" id="form-login" onsubmit="event.preventDefault(); showError();">
+<div class="space-y-1">
+<label class="font-label-md text-label-md text-on-surface" for="login-username">Username</label>
+<div class="relative">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-outline text-sm">person</span>
+<input class="w-full pl-9 pr-3 py-2 bg-surface-container-lowest border border-outline-variant rounded-lg font-body-md text-body-md text-on-surface placeholder:text-outline focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-shadow" id="login-username" placeholder="Enter your username" required="" type="text"/>
+</div>
+</div>
+<div class="space-y-1">
+<div class="flex justify-between items-center">
+<label class="font-label-md text-label-md text-on-surface" for="login-password">Password</label>
+<a class="font-label-md text-label-md text-primary hover:text-primary-container transition-colors" href="#">Forgot password?</a>
+</div>
+<div class="relative">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-outline text-sm">lock</span>
+<input class="w-full pl-9 pr-10 py-2 bg-surface-container-lowest border border-outline-variant rounded-lg font-body-md text-body-md text-on-surface placeholder:text-outline focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-shadow" id="login-password" placeholder="••••••••" required="" type="password"/>
+<button class="absolute right-3 top-1/2 -translate-y-1/2 text-outline hover:text-on-surface transition-colors" onclick="togglePassword('login-password')" type="button">
+<span class="material-symbols-outlined text-sm">visibility</span>
+</button>
+</div>
+</div>
+<div class="pt-2">
+<button class="w-full py-2.5 bg-primary hover:bg-primary-container text-on-primary font-label-md text-label-md rounded-lg shadow-sm transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary" type="submit">
+                        Log in
+                    </button>
+</div>
+</form>
+<!-- Sign Up Form (Hidden initially) -->
+<form class="space-y-4 absolute top-0 left-0 w-full px-8 transition-all duration-300 transform translate-x-full opacity-0 pointer-events-none" id="form-signup" onsubmit="event.preventDefault(); hideError();">
+<div class="space-y-1">
+<label class="font-label-md text-label-md text-on-surface" for="signup-username">Username <span class="text-error">*</span></label>
+<div class="relative">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-outline text-sm">person</span>
+<input class="w-full pl-9 pr-3 py-2 bg-surface-container-lowest border border-outline-variant rounded-lg font-body-md text-body-md text-on-surface placeholder:text-outline focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-shadow" id="signup-username" placeholder="Choose a username" required="" type="text"/>
+</div>
+</div>
+<div class="space-y-1">
+<label class="font-label-md text-label-md text-on-surface" for="signup-email">Email <span class="text-outline-variant font-normal">(Optional)</span></label>
+<div class="relative">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-outline text-sm">mail</span>
+<input class="w-full pl-9 pr-3 py-2 bg-surface-container-lowest border border-outline-variant rounded-lg font-body-md text-body-md text-on-surface placeholder:text-outline focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-shadow" id="signup-email" placeholder="name@company.com" type="email"/>
+</div>
+</div>
+<div class="space-y-1">
+<label class="font-label-md text-label-md text-on-surface" for="signup-password">Password <span class="text-error">*</span></label>
+<div class="relative">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-outline text-sm">lock</span>
+<input class="w-full pl-9 pr-10 py-2 bg-surface-container-lowest border border-outline-variant rounded-lg font-body-md text-body-md text-on-surface placeholder:text-outline focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-shadow" id="signup-password" minlength="6" placeholder="Minimum 6 characters" required="" type="password"/>
+<button class="absolute right-3 top-1/2 -translate-y-1/2 text-outline hover:text-on-surface transition-colors" onclick="togglePassword('signup-password')" type="button">
+<span class="material-symbols-outlined text-sm">visibility</span>
+</button>
+</div>
+</div>
+<div class="pt-2">
+<button class="w-full py-2.5 bg-primary hover:bg-primary-container text-on-primary font-label-md text-label-md rounded-lg shadow-sm transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary" type="submit">
+                        Create account
+                    </button>
+</div>
+<p class="text-center font-label-md text-label-md text-outline mt-4">
+                    By signing up, you agree to our <a class="text-primary hover:underline" href="#">Terms of Service</a>.
+                </p>
+</form>
+</div>
+</div>
+<script>
+        function switchTab(tab) {
+            const loginForm = document.getElementById('form-login');
+            const signupForm = document.getElementById('form-signup');
+            const loginTab = document.getElementById('tab-login');
+            const signupTab = document.getElementById('tab-signup');
+            const errorMessage = document.getElementById('error-message');
+
+            // Hide error message on tab switch
+            errorMessage.classList.add('hidden');
+
+            if (tab === 'login') {
+                // Style tabs
+                loginTab.classList.add('text-primary', 'border-primary');
+                loginTab.classList.remove('text-on-surface-variant', 'border-transparent');
+                
+                signupTab.classList.add('text-on-surface-variant', 'border-transparent');
+                signupTab.classList.remove('text-primary', 'border-primary');
+
+                // Animate forms
+                loginForm.classList.remove('-translate-x-full', 'opacity-0', 'pointer-events-none', 'absolute', 'top-0', 'left-0');
+                loginForm.classList.add('translate-x-0', 'opacity-100');
+                
+                signupForm.classList.remove('translate-x-0', 'opacity-100');
+                signupForm.classList.add('translate-x-full', 'opacity-0', 'pointer-events-none', 'absolute', 'top-0', 'left-0', 'w-full');
+            } else {
+                // Style tabs
+                signupTab.classList.add('text-primary', 'border-primary');
+                signupTab.classList.remove('text-on-surface-variant', 'border-transparent');
+                
+                loginTab.classList.add('text-on-surface-variant', 'border-transparent');
+                loginTab.classList.remove('text-primary', 'border-primary');
+
+                // Animate forms
+                signupForm.classList.remove('translate-x-full', 'opacity-0', 'pointer-events-none', 'absolute', 'top-0', 'left-0', 'w-full');
+                signupForm.classList.add('translate-x-0', 'opacity-100');
+                
+                loginForm.classList.remove('translate-x-0', 'opacity-100');
+                loginForm.classList.add('-translate-x-full', 'opacity-0', 'pointer-events-none', 'absolute', 'top-0', 'left-0');
+            }
+        }
+
+        function togglePassword(inputId) {
+            const input = document.getElementById(inputId);
+            const button = input.nextElementSibling;
+            const icon = button.querySelector('.material-symbols-outlined');
+            
+            if (input.type === 'password') {
+                input.type = 'text';
+                icon.textContent = 'visibility_off';
+            } else {
+                input.type = 'password';
+                icon.textContent = 'visibility';
+            }
+        }
+
+        function showError() {
+            // Simulated error for login demo
+            document.getElementById('error-message').classList.remove('hidden');
+        }
+
+        function hideError() {
+            document.getElementById('error-message').classList.add('hidden');
+        }
+    </script>
+</body></html>

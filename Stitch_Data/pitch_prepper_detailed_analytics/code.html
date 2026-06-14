@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Pitch Prepper - Detailed Analytics</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&amp;family=Inter:wght@400;500;600&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "primary-fixed": "#e2dfff",
+                        "on-primary-container": "#dad7ff",
+                        "on-primary": "#ffffff",
+                        "surface": "#fcf8ff",
+                        "surface-container-high": "#eae6f4",
+                        "on-tertiary-fixed-variant": "#653e00",
+                        "on-tertiary": "#ffffff",
+                        "on-tertiary-fixed": "#2a1700",
+                        "background": "#fcf8ff",
+                        "on-error": "#ffffff",
+                        "surface-variant": "#e4e1ee",
+                        "surface-bright": "#fcf8ff",
+                        "on-surface": "#1b1b24",
+                        "surface-container-low": "#f5f2ff",
+                        "on-secondary": "#ffffff",
+                        "secondary-fixed-dim": "#4edea3",
+                        "error-container": "#ffdad6",
+                        "surface-tint": "#4d44e3",
+                        "tertiary": "#684000",
+                        "surface-container-highest": "#e4e1ee",
+                        "error": "#ba1a1a",
+                        "secondary-container": "#6cf8bb",
+                        "on-background": "#1b1b24",
+                        "inverse-surface": "#302f39",
+                        "primary": "#3525cd",
+                        "on-error-container": "#93000a",
+                        "surface-container": "#f0ecf9",
+                        "on-secondary-fixed": "#002113",
+                        "surface-dim": "#dcd8e5",
+                        "on-primary-fixed": "#0f0069",
+                        "secondary": "#006c49",
+                        "outline-variant": "#c7c4d8",
+                        "primary-container": "#4f46e5",
+                        "on-primary-fixed-variant": "#3323cc",
+                        "secondary-fixed": "#6ffbbe",
+                        "surface-container-lowest": "#ffffff",
+                        "on-surface-variant": "#464555",
+                        "tertiary-fixed": "#ffddb8",
+                        "on-secondary-fixed-variant": "#005236",
+                        "tertiary-container": "#885500",
+                        "inverse-on-surface": "#f3effc",
+                        "primary-fixed-dim": "#c3c0ff",
+                        "inverse-primary": "#c3c0ff",
+                        "on-tertiary-container": "#ffd4a4",
+                        "on-secondary-container": "#00714d",
+                        "tertiary-fixed-dim": "#ffb95f",
+                        "outline": "#777587"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    "spacing": {
+                        "margin-desktop": "2rem",
+                        "gutter": "1.5rem",
+                        "stack-sm": "0.5rem",
+                        "margin-mobile": "1rem",
+                        "container-max": "1280px",
+                        "stack-lg": "2rem",
+                        "stack-md": "1rem"
+                    },
+                    "fontFamily": {
+                        "headline-lg": ["Geist"],
+                        "metric-xl": ["Geist"],
+                        "headline-lg-mobile": ["Geist"],
+                        "label-md": ["Geist"],
+                        "headline-md": ["Geist"],
+                        "body-lg": ["Inter"],
+                        "body-md": ["Inter"]
+                    },
+                    "fontSize": {
+                        "headline-lg": ["32px", { "lineHeight": "40px", "letterSpacing": "-0.02em", "fontWeight": "600" }],
+                        "metric-xl": ["48px", { "lineHeight": "48px", "letterSpacing": "-0.04em", "fontWeight": "700" }],
+                        "headline-lg-mobile": ["24px", { "lineHeight": "32px", "letterSpacing": "-0.01em", "fontWeight": "600" }],
+                        "label-md": ["12px", { "lineHeight": "16px", "letterSpacing": "0.05em", "fontWeight": "500" }],
+                        "headline-md": ["20px", { "lineHeight": "28px", "fontWeight": "600" }],
+                        "body-lg": ["16px", { "lineHeight": "24px", "fontWeight": "400" }],
+                        "body-md": ["14px", { "lineHeight": "20px", "fontWeight": "400" }]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .chart-grid {
+            background-image: 
+                linear-gradient(to right, #e2e8f0 1px, transparent 1px),
+                linear-gradient(to bottom, #e2e8f0 1px, transparent 1px);
+            background-size: 40px 40px;
+            opacity: 0.5;
+        }
+    </style>
+</head>
+<body class="bg-background text-on-background antialiased min-h-screen flex flex-col">
+<!-- TopAppBar -->
+<header class="bg-surface dark:bg-surface-dim shadow-sm sticky top-0 z-50 w-full">
+<div class="flex justify-between items-center w-full px-margin-desktop max-w-container-max mx-auto h-16">
+<div class="flex items-center gap-6">
+<span class="text-headline-md font-headline-md font-bold text-primary dark:text-inverse-primary tracking-tight">Pitch Prepper</span>
+<nav class="hidden md:flex space-x-6 h-full items-center">
+<a class="text-on-surface-variant dark:text-outline-variant hover:text-primary-container dark:hover:text-primary-fixed-dim transition-colors text-label-md font-label-md" href="#">Home</a>
+<a class="text-primary dark:text-inverse-primary border-b-2 border-primary dark:border-inverse-primary pb-1 text-label-md font-label-md" href="#">Results</a>
+<a class="text-on-surface-variant dark:text-outline-variant hover:text-primary-container dark:hover:text-primary-fixed-dim transition-colors text-label-md font-label-md" href="#">Leaderboard</a>
+</nav>
+</div>
+<div class="flex items-center space-x-4">
+<button class="text-label-md font-label-md text-primary bg-transparent border border-primary px-4 py-2 rounded hover:bg-primary-fixed-dim transition-colors hidden md:block">Login</button>
+<button class="text-label-md font-label-md text-on-primary bg-primary px-4 py-2 rounded hover:bg-primary-container transition-colors shadow-sm hidden md:block">Sign Up</button>
+<div class="w-8 h-8 rounded-full bg-surface-variant overflow-hidden border border-outline-variant">
+<img alt="User avatar" class="w-full h-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCUFAR0lin76cIsjiku10fLsuam2wDfNGa4FWALB-NkdCsm1kmnjFjJVVGWNvPxuZRK2_L-VboW-HilGPwEqsRacu5WXv4v8qh-JBZkbRRQSNkU3M30tyq4IQHaKUUFN9SI1JwHBFWvJrTQC5ggxotzQhJkRfVIUy8bZw5RW9c1gJp4VVub9axwWMvSUD4nmySdgQsLZP2Xv-viiuEwFrTr74eucwPoiJUEhvzae_WmMrOlFOslR8iArqGPrFEjRH587BR52U-wzvg"/>
+</div>
+</div>
+</div>
+</header>
+<!-- Main Content -->
+<main class="flex-grow w-full px-margin-mobile md:px-margin-desktop py-stack-lg max-w-container-max mx-auto">
+<!-- Header Section -->
+<div class="mb-stack-lg flex flex-col md:flex-row md:items-end justify-between gap-4">
+<div>
+<h1 class="text-headline-lg-mobile md:text-headline-lg font-headline-lg-mobile md:font-headline-lg text-on-surface mb-2">Detailed Analytics</h1>
+<p class="text-body-lg font-body-lg text-on-surface-variant">Deep dive into your latest presentation metrics across six core dimensions.</p>
+</div>
+<div class="flex items-center gap-3">
+<button class="flex items-center gap-2 px-4 py-2 rounded-lg border border-outline-variant text-on-surface hover:bg-surface-container transition-colors text-label-md font-label-md">
+<span class="material-symbols-outlined text-sm">download</span>
+                    Export PDF
+                </button>
+<button class="flex items-center gap-2 px-4 py-2 rounded-lg bg-secondary text-on-secondary hover:bg-secondary-container hover:text-on-secondary-container transition-colors text-label-md font-label-md shadow-sm">
+<span class="material-symbols-outlined text-sm">play_arrow</span>
+                    Replay Session
+                </button>
+</div>
+</div>
+<!-- Bento Grid Layout for Analytics -->
+<div class="grid grid-cols-1 md:grid-cols-12 gap-gutter">
+<!-- 1. Speaking Rate (Line Chart Style) -->
+<div class="col-span-1 md:col-span-8 bg-surface-container-lowest rounded-xl border border-outline-variant shadow-sm p-6 flex flex-col">
+<div class="flex justify-between items-start mb-6">
+<div>
+<h2 class="text-headline-md font-headline-md text-on-surface flex items-center gap-2">
+<span class="material-symbols-outlined text-primary">speed</span>
+                            Speaking Rate
+                        </h2>
+<p class="text-body-md font-body-md text-on-surface-variant">Words per minute over time. Target: 130-150 WPM.</p>
+</div>
+<div class="text-right">
+<span class="text-metric-xl font-metric-xl text-primary">142</span>
+<span class="text-label-md font-label-md text-on-surface-variant block uppercase">Avg WPM</span>
+</div>
+</div>
+<div class="relative flex-grow min-h-[240px] w-full rounded bg-surface-container overflow-hidden border border-outline-variant">
+<div class="absolute inset-0 chart-grid"></div>
+<!-- Decorative Line representing chart data -->
+<svg class="absolute inset-0 h-full w-full" preserveaspectratio="none" viewbox="0 0 100 100">
+<!-- Optimal Range Band -->
+<rect fill="#6cf8bb" height="40" opacity="0.1" width="100" x="0" y="30"></rect>
+<path class="drop-shadow-md" d="M0 60 Q 10 50, 20 40 T 40 45 T 60 35 T 80 50 T 100 45" fill="none" stroke="#3525cd" stroke-width="2"></path>
+<circle cx="60" cy="35" fill="#3525cd" r="2"></circle>
+<!-- Tooltip anchor simulation -->
+<g transform="translate(60, 20)">
+<rect fill="#1b1b24" height="16" rx="2" width="30" x="-15" y="-12"></rect>
+<text fill="#ffffff" font-family="Geist" font-size="8" text-anchor="middle" x="0" y="-1">165</text>
+<path d="M-3 4 L3 4 L0 7 Z" fill="#1b1b24"></path>
+</g>
+</svg>
+</div>
+</div>
+<!-- 2. Pitch (Vertical Range / Bar Style) -->
+<div class="col-span-1 md:col-span-4 bg-surface-container-lowest rounded-xl border border-outline-variant shadow-sm p-6 flex flex-col">
+<div class="mb-4">
+<h2 class="text-headline-md font-headline-md text-on-surface flex items-center gap-2">
+<span class="material-symbols-outlined text-secondary">graphic_eq</span>
+                        Pitch Variation
+                    </h2>
+<p class="text-body-md font-body-md text-on-surface-variant">Vocal range expressiveness.</p>
+</div>
+<div class="flex-grow flex flex-col justify-center items-center relative py-4">
+<!-- Circular Gauge Simulation -->
+<div class="relative w-40 h-40 flex items-center justify-center">
+<svg class="w-full h-full transform -rotate-90" viewbox="0 0 100 100">
+<circle cx="50" cy="50" fill="none" r="40" stroke="#e4e1ee" stroke-dasharray="188 62" stroke-linecap="round" stroke-width="8"></circle>
+<circle class="drop-shadow" cx="50" cy="50" fill="none" r="40" stroke="#006c49" stroke-dasharray="140 110" stroke-linecap="round" stroke-width="8"></circle>
+</svg>
+<div class="absolute flex flex-col items-center">
+<span class="text-metric-xl font-metric-xl text-on-surface leading-none">8.4</span>
+<span class="text-label-md font-label-md text-secondary uppercase mt-1">Excellent</span>
+</div>
+</div>
+<div class="w-full mt-6 space-y-3">
+<div>
+<div class="flex justify-between text-label-md font-label-md mb-1">
+<span class="text-on-surface-variant">High Pitch Freq.</span>
+<span class="text-on-surface">24%</span>
+</div>
+<div class="w-full h-2 bg-surface-variant rounded-full overflow-hidden">
+<div class="h-full bg-secondary w-[24%] rounded-full"></div>
+</div>
+</div>
+<div>
+<div class="flex justify-between text-label-md font-label-md mb-1">
+<span class="text-on-surface-variant">Monotone Segments</span>
+<span class="text-on-surface">12%</span>
+</div>
+<div class="w-full h-2 bg-surface-variant rounded-full overflow-hidden">
+<div class="h-full bg-error w-[12%] rounded-full"></div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- 3. Filler Words (List / Horizontal Bars) -->
+<div class="col-span-1 md:col-span-4 bg-surface-container-lowest rounded-xl border border-outline-variant shadow-sm p-6">
+<div class="mb-6">
+<h2 class="text-headline-md font-headline-md text-on-surface flex items-center gap-2">
+<span class="material-symbols-outlined text-error">record_voice_over</span>
+                        Filler Words
+                    </h2>
+<p class="text-body-md font-body-md text-on-surface-variant">Frequency of non-lexical utterances.</p>
+</div>
+<div class="space-y-4">
+<div class="group">
+<div class="flex justify-between items-center mb-1">
+<span class="px-2 py-1 bg-error-container text-on-error-container text-label-md font-label-md rounded">"um"</span>
+<span class="text-body-md font-body-md text-on-surface font-semibold">14 times</span>
+</div>
+<div class="w-full h-2 bg-surface-variant rounded-full overflow-hidden">
+<div class="h-full bg-error w-[60%] rounded-full transition-all group-hover:bg-on-error-container"></div>
+</div>
+</div>
+<div class="group">
+<div class="flex justify-between items-center mb-1">
+<span class="px-2 py-1 bg-surface-container-high text-on-surface text-label-md font-label-md rounded">"like"</span>
+<span class="text-body-md font-body-md text-on-surface font-semibold">8 times</span>
+</div>
+<div class="w-full h-2 bg-surface-variant rounded-full overflow-hidden">
+<div class="h-full bg-tertiary-fixed-dim w-[35%] rounded-full transition-all"></div>
+</div>
+</div>
+<div class="group">
+<div class="flex justify-between items-center mb-1">
+<span class="px-2 py-1 bg-surface-container-high text-on-surface text-label-md font-label-md rounded">"you know"</span>
+<span class="text-body-md font-body-md text-on-surface font-semibold">3 times</span>
+</div>
+<div class="w-full h-2 bg-surface-variant rounded-full overflow-hidden">
+<div class="h-full bg-outline w-[15%] rounded-full transition-all"></div>
+</div>
+</div>
+</div>
+</div>
+<!-- 4. Pause Timeline (Timeline / Heatmap Style) -->
+<div class="col-span-1 md:col-span-8 bg-surface-container-lowest rounded-xl border border-outline-variant shadow-sm p-6">
+<div class="flex justify-between items-start mb-6">
+<div>
+<h2 class="text-headline-md font-headline-md text-on-surface flex items-center gap-2">
+<span class="material-symbols-outlined text-primary-container">pause_circle</span>
+                            Pause Timeline
+                        </h2>
+<p class="text-body-md font-body-md text-on-surface-variant">Strategic pausing vs. awkward silences.</p>
+</div>
+</div>
+<div class="w-full h-24 bg-surface-container rounded border border-outline-variant relative flex items-center px-2">
+<!-- Timeline Base -->
+<div class="w-full h-1 bg-outline-variant rounded-full relative">
+<!-- Positive Pauses (Greenish) -->
+<div class="absolute h-4 w-4 bg-secondary rounded-full -top-1.5 left-[15%] cursor-pointer hover:scale-125 transition-transform" title="Strategic Pause: 1.2s"></div>
+<div class="absolute h-4 w-6 bg-secondary rounded-full -top-1.5 left-[45%] cursor-pointer hover:scale-125 transition-transform" title="Strategic Pause: 1.8s"></div>
+<div class="absolute h-4 w-4 bg-secondary rounded-full -top-1.5 left-[80%] cursor-pointer hover:scale-125 transition-transform" title="Strategic Pause: 1.1s"></div>
+<!-- Negative Pauses (Reddish) -->
+<div class="absolute h-4 w-8 bg-error rounded-full -top-1.5 left-[30%] cursor-pointer hover:scale-125 transition-transform" title="Awkward Silence: 3.5s"></div>
+<div class="absolute h-4 w-10 bg-error rounded-full -top-1.5 left-[65%] cursor-pointer hover:scale-125 transition-transform" title="Awkward Silence: 4.2s"></div>
+</div>
+<!-- Time Markers -->
+<div class="absolute bottom-2 left-0 w-full flex justify-between px-2 text-[10px] text-on-surface-variant font-label-md">
+<span>0:00</span>
+<span>1:00</span>
+<span>2:00</span>
+<span>3:00</span>
+<span>4:00</span>
+</div>
+</div>
+<div class="mt-4 flex gap-4 text-label-md font-label-md justify-end">
+<div class="flex items-center gap-1"><div class="w-3 h-3 rounded-full bg-secondary"></div> Effective Pause</div>
+<div class="flex items-center gap-1"><div class="w-3 h-3 rounded-full bg-error"></div> Awkward Silence</div>
+</div>
+</div>
+<!-- 5. Content Scores (Radar / Hexagon Pattern) & 6. Volume (Area Chart) -->
+<div class="col-span-1 md:col-span-12 grid grid-cols-1 md:grid-cols-2 gap-gutter">
+<!-- Content Scores -->
+<div class="bg-surface-container-lowest rounded-xl border border-outline-variant shadow-sm p-6">
+<div class="mb-4">
+<h2 class="text-headline-md font-headline-md text-on-surface flex items-center gap-2">
+<span class="material-symbols-outlined text-tertiary">analytics</span>
+                            Content Effectiveness
+                        </h2>
+</div>
+<div class="grid grid-cols-2 gap-4">
+<div class="p-4 bg-surface rounded-lg border border-surface-variant">
+<div class="text-label-md font-label-md text-on-surface-variant uppercase mb-1">Clarity</div>
+<div class="text-headline-lg font-headline-lg text-on-surface">92%</div>
+</div>
+<div class="p-4 bg-surface rounded-lg border border-surface-variant">
+<div class="text-label-md font-label-md text-on-surface-variant uppercase mb-1">Engagement</div>
+<div class="text-headline-lg font-headline-lg text-on-surface">78%</div>
+</div>
+<div class="p-4 bg-surface rounded-lg border border-surface-variant">
+<div class="text-label-md font-label-md text-on-surface-variant uppercase mb-1">Structure</div>
+<div class="text-headline-lg font-headline-lg text-on-surface">85%</div>
+</div>
+<div class="p-4 bg-surface rounded-lg border border-surface-variant">
+<div class="text-label-md font-label-md text-on-surface-variant uppercase mb-1">Vocabulary</div>
+<div class="text-headline-lg font-headline-lg text-on-surface">88%</div>
+</div>
+</div>
+</div>
+<!-- Volume Dynamics -->
+<div class="bg-surface-container-lowest rounded-xl border border-outline-variant shadow-sm p-6">
+<div class="mb-4 flex justify-between items-start">
+<div>
+<h2 class="text-headline-md font-headline-md text-on-surface flex items-center gap-2">
+<span class="material-symbols-outlined text-primary">volume_up</span>
+                                Volume Dynamics
+                            </h2>
+<p class="text-body-md font-body-md text-on-surface-variant">Loudness (dB) modulation over session.</p>
+</div>
+</div>
+<div class="relative w-full h-32 bg-surface rounded border border-outline-variant overflow-hidden flex items-end">
+<div class="absolute inset-0 chart-grid"></div>
+<!-- Area Chart SVG -->
+<svg class="absolute bottom-0 w-full h-full" preserveaspectratio="none" viewbox="0 0 100 50">
+<lineargradient id="volGrad" x1="0" x2="0" y1="0" y2="1">
+<stop offset="0%" stop-color="#4f46e5" stop-opacity="0.5"></stop>
+<stop offset="100%" stop-color="#4f46e5" stop-opacity="0.0"></stop>
+</lineargradient>
+<path d="M0 50 L0 30 Q 15 10, 30 25 T 60 20 T 80 35 T 100 15 L100 50 Z" fill="url(#volGrad)"></path>
+<path d="M0 30 Q 15 10, 30 25 T 60 20 T 80 35 T 100 15" fill="none" stroke="#4f46e5" stroke-width="1.5"></path>
+</svg>
+</div>
+</div>
+</div>
+</div>
+</main>
+<!-- Footer -->
+<footer class="bg-surface-container-low dark:bg-inverse-surface border-t border-outline-variant dark:border-outline full-width mt-auto">
+<div class="flex flex-col md:flex-row justify-between items-center w-full px-margin-desktop py-stack-lg max-w-container-max mx-auto gap-4">
+<div class="text-label-md font-label-md font-bold text-primary dark:text-inverse-primary tracking-tight">
+                Pitch Prepper
+            </div>
+<p class="text-body-md font-body-md text-on-surface dark:text-inverse-on-surface text-center md:text-left">
+                © 2024 Pitch Prepper. AI-driven professional mentorship.
+            </p>
+<nav class="flex flex-wrap justify-center gap-4">
+<a class="text-on-surface-variant dark:text-outline-variant hover:text-primary dark:hover:text-inverse-primary transition-colors text-label-md font-label-md" href="#">Privacy Policy</a>
+<a class="text-on-surface-variant dark:text-outline-variant hover:text-primary dark:hover:text-inverse-primary transition-colors text-label-md font-label-md" href="#">Terms of Service</a>
+<a class="text-on-surface-variant dark:text-outline-variant hover:text-primary dark:hover:text-inverse-primary transition-colors text-label-md font-label-md" href="#">Contact Support</a>
+<a class="text-on-surface-variant dark:text-outline-variant hover:text-primary dark:hover:text-inverse-primary transition-colors text-label-md font-label-md" href="#">Documentation</a>
+</nav>
+</div>
+</footer>
+</body></html>

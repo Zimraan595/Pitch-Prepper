@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Pitch Prepper - Leaderboard</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@100..900&amp;family=Inter:wght@100..900&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "primary-fixed": "#e2dfff",
+                        "on-primary-container": "#dad7ff",
+                        "on-primary": "#ffffff",
+                        "surface": "#fcf8ff",
+                        "surface-container-high": "#eae6f4",
+                        "on-tertiary-fixed-variant": "#653e00",
+                        "on-tertiary": "#ffffff",
+                        "on-tertiary-fixed": "#2a1700",
+                        "background": "#fcf8ff",
+                        "on-error": "#ffffff",
+                        "surface-variant": "#e4e1ee",
+                        "surface-bright": "#fcf8ff",
+                        "on-surface": "#1b1b24",
+                        "surface-container-low": "#f5f2ff",
+                        "on-secondary": "#ffffff",
+                        "secondary-fixed-dim": "#4edea3",
+                        "error-container": "#ffdad6",
+                        "surface-tint": "#4d44e3",
+                        "tertiary": "#684000",
+                        "surface-container-highest": "#e4e1ee",
+                        "error": "#ba1a1a",
+                        "secondary-container": "#6cf8bb",
+                        "on-background": "#1b1b24",
+                        "inverse-surface": "#302f39",
+                        "primary": "#3525cd",
+                        "on-error-container": "#93000a",
+                        "surface-container": "#f0ecf9",
+                        "on-secondary-fixed": "#002113",
+                        "surface-dim": "#dcd8e5",
+                        "on-primary-fixed": "#0f0069",
+                        "secondary": "#006c49",
+                        "outline-variant": "#c7c4d8",
+                        "primary-container": "#4f46e5",
+                        "on-primary-fixed-variant": "#3323cc",
+                        "secondary-fixed": "#6ffbbe",
+                        "surface-container-lowest": "#ffffff",
+                        "on-surface-variant": "#464555",
+                        "tertiary-fixed": "#ffddb8",
+                        "on-secondary-fixed-variant": "#005236",
+                        "tertiary-container": "#885500",
+                        "inverse-on-surface": "#f3effc",
+                        "primary-fixed-dim": "#c3c0ff",
+                        "inverse-primary": "#c3c0ff",
+                        "on-tertiary-container": "#ffd4a4",
+                        "on-secondary-container": "#00714d",
+                        "tertiary-fixed-dim": "#ffb95f",
+                        "outline": "#777587"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    "spacing": {
+                        "margin-desktop": "2rem",
+                        "gutter": "1.5rem",
+                        "stack-sm": "0.5rem",
+                        "margin-mobile": "1rem",
+                        "container-max": "1280px",
+                        "stack-lg": "2rem",
+                        "stack-md": "1rem"
+                    },
+                    "fontFamily": {
+                        "headline-lg": ["Geist"],
+                        "metric-xl": ["Geist"],
+                        "headline-lg-mobile": ["Geist"],
+                        "label-md": ["Geist"],
+                        "headline-md": ["Geist"],
+                        "body-lg": ["Inter"],
+                        "body-md": ["Inter"]
+                    },
+                    "fontSize": {
+                        "headline-lg": ["32px", { "lineHeight": "40px", "letterSpacing": "-0.02em", "fontWeight": "600" }],
+                        "metric-xl": ["48px", { "lineHeight": "48px", "letterSpacing": "-0.04em", "fontWeight": "700" }],
+                        "headline-lg-mobile": ["24px", { "lineHeight": "32px", "letterSpacing": "-0.01em", "fontWeight": "600" }],
+                        "label-md": ["12px", { "lineHeight": "16px", "letterSpacing": "0.05em", "fontWeight": "500" }],
+                        "headline-md": ["20px", { "lineHeight": "28px", "fontWeight": "600" }],
+                        "body-lg": ["16px", { "lineHeight": "24px", "fontWeight": "400" }],
+                        "body-md": ["14px", { "lineHeight": "20px", "fontWeight": "400" }]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+    </style>
+</head>
+<body class="bg-background text-on-background min-h-screen flex flex-col font-body-md">
+<!-- TopAppBar -->
+<header class="bg-surface dark:bg-surface-dim shadow-sm docked full-width top-0 z-50">
+<div class="flex justify-between items-center w-full px-margin-desktop max-w-container-max mx-auto h-16">
+<div class="flex items-center gap-gutter">
+<a class="text-headline-md font-headline-md font-bold text-primary dark:text-inverse-primary" href="#">Pitch Prepper</a>
+<nav class="hidden md:flex gap-stack-md ml-stack-lg">
+<a class="text-on-surface-variant dark:text-outline-variant hover:text-primary-container dark:hover:text-primary-fixed-dim transition-colors text-label-md font-label-md" href="#">Home</a>
+<a class="text-on-surface-variant dark:text-outline-variant hover:text-primary-container dark:hover:text-primary-fixed-dim transition-colors text-label-md font-label-md" href="#">Results</a>
+<a class="text-primary dark:text-inverse-primary border-b-2 border-primary dark:border-inverse-primary pb-1 text-label-md font-label-md scale-95 transition-transform" href="#">Leaderboard</a>
+</nav>
+</div>
+<div class="flex items-center gap-stack-sm">
+<button class="text-primary border border-outline-variant px-4 py-2 rounded-lg text-label-md font-label-md hover:bg-surface-container transition-colors">Login</button>
+<button class="bg-primary text-on-primary px-4 py-2 rounded-lg text-label-md font-label-md hover:bg-primary-container transition-colors">Sign Up</button>
+</div>
+</div>
+</header>
+<!-- Main Content -->
+<main class="flex-grow w-full px-margin-mobile md:px-margin-desktop max-w-container-max mx-auto py-stack-lg flex flex-col gap-stack-lg">
+<!-- Header Section -->
+<section class="flex flex-col md:flex-row justify-between items-start md:items-end gap-stack-md">
+<div>
+<h1 class="text-headline-lg-mobile md:text-headline-lg font-headline-lg-mobile md:font-headline-lg text-on-surface">Global Leaderboard</h1>
+<p class="text-body-lg font-body-lg text-on-surface-variant mt-stack-sm">See how you rank against top speakers worldwide.</p>
+</div>
+<button class="bg-primary text-on-primary px-6 py-3 rounded-lg text-label-md font-label-md hover:bg-primary-container transition-colors shadow-sm flex items-center gap-2">
+<span class="material-symbols-outlined text-[18px]">trending_up</span>
+                Improve Your Score
+            </button>
+</section>
+<!-- Stats Overview Bento -->
+<section class="grid grid-cols-1 md:grid-cols-3 gap-gutter">
+<div class="bg-white rounded-xl shadow-sm border border-outline-variant p-stack-md flex flex-col">
+<span class="text-label-md font-label-md text-on-surface-variant uppercase tracking-wider">Your Current Rank</span>
+<span class="text-metric-xl font-metric-xl text-primary mt-stack-sm">#42</span>
+<div class="mt-auto pt-stack-sm text-body-md font-body-md text-secondary flex items-center gap-1">
+<span class="material-symbols-outlined text-[16px]">arrow_upward</span> Top 5% Globally
+                </div>
+</div>
+<div class="bg-white rounded-xl shadow-sm border border-outline-variant p-stack-md flex flex-col">
+<span class="text-label-md font-label-md text-on-surface-variant uppercase tracking-wider">Total Participants</span>
+<span class="text-metric-xl font-metric-xl text-on-surface mt-stack-sm">12,408</span>
+<div class="mt-auto pt-stack-sm text-body-md font-body-md text-on-surface-variant">Active this week</div>
+</div>
+<div class="bg-white rounded-xl shadow-sm border border-outline-variant p-stack-md flex flex-col">
+<span class="text-label-md font-label-md text-on-surface-variant uppercase tracking-wider">Average Score</span>
+<span class="text-metric-xl font-metric-xl text-on-surface mt-stack-sm">78.4</span>
+<div class="w-full bg-surface-variant h-2 rounded-full mt-auto">
+<div class="bg-primary h-2 rounded-full" style="width: 78.4%"></div>
+</div>
+</div>
+</section>
+<!-- Leaderboard Table Container -->
+<section class="bg-white rounded-xl shadow-sm border border-outline-variant overflow-hidden">
+<div class="overflow-x-auto">
+<table class="w-full text-left border-collapse">
+<thead class="bg-surface-container-low border-b border-outline-variant">
+<tr>
+<th class="py-4 px-6 text-label-md font-label-md text-on-surface-variant uppercase tracking-wider w-16">Rank</th>
+<th class="py-4 px-6 text-label-md font-label-md text-on-surface-variant uppercase tracking-wider">Speaker</th>
+<th class="py-4 px-6 text-label-md font-label-md text-on-surface-variant uppercase tracking-wider hidden md:table-cell">Specialty</th>
+<th class="py-4 px-6 text-label-md font-label-md text-on-surface-variant uppercase tracking-wider text-right">Best Score</th>
+<th class="py-4 px-6 text-label-md font-label-md text-on-surface-variant uppercase tracking-wider text-right hidden sm:table-cell">Attempts</th>
+</tr>
+</thead>
+<tbody class="divide-y divide-outline-variant">
+<!-- Top 3 Styling -->
+<tr class="hover:bg-surface-container-lowest transition-colors">
+<td class="py-4 px-6">
+<div class="w-8 h-8 rounded-full bg-tertiary-fixed-dim text-tertiary flex items-center justify-center font-bold text-body-md">1</div>
+</td>
+<td class="py-4 px-6">
+<div class="flex items-center gap-3">
+<div class="w-10 h-10 rounded-full bg-surface-variant overflow-hidden flex-shrink-0">
+<img alt="User avatar" class="w-full h-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBwqXa7bk3lUgpos4Rboq0vDUrZ0wi7GVEBmtmbuj2EhlRmblgwjgMdEf-MA6d8Q2ckyQcYNnLdDrBSuWmrq2eW18SJf9qSq3wmiDINNLiI36E_MnmOrhSXPG716bU2UWmdugwsFeqZfMm6DP_ZKmNJGgHqLRXF1Q9PKL9iViO1pzSBZx-hAlNWpRFde6EHswwbSvXf1JbvkX2TgyUjXrLDGo3z2fKxTHAZB8i3fUgzQWcAS9oAXL2VyqH7OUirZFRY3KhVz9mfTVs"/>
+</div>
+<div>
+<div class="text-body-lg font-body-lg text-on-surface font-semibold">Sarah Jenkins</div>
+<div class="text-label-md font-label-md text-on-surface-variant">@sjenkins_speaks</div>
+</div>
+</div>
+</td>
+<td class="py-4 px-6 hidden md:table-cell">
+<span class="bg-primary-container/10 text-primary px-2 py-1 rounded text-label-md font-label-md">TEDx Style</span>
+</td>
+<td class="py-4 px-6 text-right">
+<div class="text-body-lg font-body-lg text-on-surface font-bold">99.8</div>
+</td>
+<td class="py-4 px-6 text-right hidden sm:table-cell text-body-md font-body-md text-on-surface-variant">142</td>
+</tr>
+<tr class="hover:bg-surface-container-lowest transition-colors">
+<td class="py-4 px-6">
+<div class="w-8 h-8 rounded-full bg-surface-variant text-on-surface-variant flex items-center justify-center font-bold text-body-md">2</div>
+</td>
+<td class="py-4 px-6">
+<div class="flex items-center gap-3">
+<div class="w-10 h-10 rounded-full bg-surface-variant overflow-hidden flex-shrink-0">
+<img alt="User avatar" class="w-full h-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuD0dv4gHwoavRRa0o7OTrvLVDK3-8vI4keGY19bLmwyopsAiQddHKm6WaWs0C4fqoC8hBKCc3N6fL5TuTuA9XWA7jNRq20EB9noq-X-eGgwqnTdgvH1ZrsWHTRF2ZLijHDcyumMU7cKkgFSm_kgSgKMP2FoYIYYjNmpUcAA2Ed5Zygo85lBlAUMMbJkUGl5xZK4S1gQEYvFr0tYCjxA9u4ZjhpDnld9_zRyIqjKLL4QRPZvazUw-ehcP6EF1GcInxYQE-9GTM6v0j0"/>
+</div>
+<div>
+<div class="text-body-lg font-body-lg text-on-surface font-semibold">Marcus Chen</div>
+<div class="text-label-md font-label-md text-on-surface-variant">@marcus_c</div>
+</div>
+</div>
+</td>
+<td class="py-4 px-6 hidden md:table-cell">
+<span class="bg-primary-container/10 text-primary px-2 py-1 rounded text-label-md font-label-md">Sales Pitch</span>
+</td>
+<td class="py-4 px-6 text-right">
+<div class="text-body-lg font-body-lg text-on-surface font-bold">98.5</div>
+</td>
+<td class="py-4 px-6 text-right hidden sm:table-cell text-body-md font-body-md text-on-surface-variant">87</td>
+</tr>
+<tr class="hover:bg-surface-container-lowest transition-colors">
+<td class="py-4 px-6">
+<div class="w-8 h-8 rounded-full bg-tertiary-container/20 text-tertiary flex items-center justify-center font-bold text-body-md">3</div>
+</td>
+<td class="py-4 px-6">
+<div class="flex items-center gap-3">
+<div class="w-10 h-10 rounded-full bg-surface-variant overflow-hidden flex-shrink-0">
+<img alt="User avatar" class="w-full h-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuD4q0BxLfi5Z8KtJKdujDobTKwUlbrJnqTNqB5LagRAhgZvaMH5gb-6QRu5LOBYevVUFOD4zW2NBCcsV5q5eRhmrKB5P_LCxv8AE1Np2itxkz8DECbZRv7pJMFci9nk-mieqGOXmcSzET0vyL9FOUavBmKvwhQRs-uRmiO2uQuOkVP9pN_eKzkebPlXHudrPCrhLIOYOZ0f0kp6-8aPNJ8kpci0kcn80oBa7QknTjXryWSQo49UdtCbyBlD8ExzuC7T2rfbyhhMv7g"/>
+</div>
+<div>
+<div class="text-body-lg font-body-lg text-on-surface font-semibold">Elena Rodriguez</div>
+<div class="text-label-md font-label-md text-on-surface-variant">@elena_r</div>
+</div>
+</div>
+</td>
+<td class="py-4 px-6 hidden md:table-cell">
+<span class="bg-primary-container/10 text-primary px-2 py-1 rounded text-label-md font-label-md">Academic</span>
+</td>
+<td class="py-4 px-6 text-right">
+<div class="text-body-lg font-body-lg text-on-surface font-bold">97.2</div>
+</td>
+<td class="py-4 px-6 text-right hidden sm:table-cell text-body-md font-body-md text-on-surface-variant">210</td>
+</tr>
+<!-- Gap indicator -->
+<tr>
+<td class="py-2 bg-surface-container-lowest text-center" colspan="5">
+<span class="material-symbols-outlined text-outline-variant">more_vert</span>
+</td>
+</tr>
+<!-- "You" Row -->
+<tr class="bg-primary-fixed/30 hover:bg-primary-fixed/40 transition-colors border-l-4 border-primary">
+<td class="py-4 px-6 pl-5 text-body-lg font-body-lg text-on-surface font-medium">42</td>
+<td class="py-4 px-6">
+<div class="flex items-center gap-3">
+<div class="w-10 h-10 rounded-full bg-primary-container text-on-primary overflow-hidden flex-shrink-0 flex items-center justify-center">
+<span class="material-symbols-outlined">person</span>
+</div>
+<div>
+<div class="text-body-lg font-body-lg text-on-surface font-bold">You</div>
+<div class="text-label-md font-label-md text-primary">@user_account</div>
+</div>
+</div>
+</td>
+<td class="py-4 px-6 hidden md:table-cell">
+<span class="bg-primary-container/10 text-primary px-2 py-1 rounded text-label-md font-label-md">Investor Pitch</span>
+</td>
+<td class="py-4 px-6 text-right">
+<div class="text-body-lg font-body-lg text-on-surface font-bold">88.4</div>
+</td>
+<td class="py-4 px-6 text-right hidden sm:table-cell text-body-md font-body-md text-on-surface-variant">34</td>
+</tr>
+<!-- Below You -->
+<tr class="hover:bg-surface-container-lowest transition-colors">
+<td class="py-4 px-6 text-body-lg font-body-lg text-on-surface-variant">43</td>
+<td class="py-4 px-6">
+<div class="flex items-center gap-3">
+<div class="w-10 h-10 rounded-full bg-surface-variant overflow-hidden flex-shrink-0">
+<img alt="User avatar" class="w-full h-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDwIVHcvR18QC7LTYt1NGJg4evA_mxYxcFSlcGafRKhBWzfhL1Aw0keZBhf1eEMSZ2HkEGfZacYFGtwAzHQw5PS317Bx0nAyVROZZ8Qxlii480kIn0Az69xnl-chPtuOOl78Qj0_DlOgibb47kwbelBkVpzQFjTASg0aqChnXZPvoIXyuWnhq2mBfg6ODnc8onHRwk7RXavAGri873UvExSCbG2Xq2X8-ehNMa3OoHGrzi4hOZmziRyLEfiEVYCuSqsogZsC0TvCtk"/>
+</div>
+<div>
+<div class="text-body-lg font-body-lg text-on-surface">David Kim</div>
+<div class="text-label-md font-label-md text-on-surface-variant">@dk_speaks</div>
+</div>
+</div>
+</td>
+<td class="py-4 px-6 hidden md:table-cell">
+<span class="bg-surface-variant text-on-surface-variant px-2 py-1 rounded text-label-md font-label-md">General</span>
+</td>
+<td class="py-4 px-6 text-right">
+<div class="text-body-lg font-body-lg text-on-surface">88.1</div>
+</td>
+<td class="py-4 px-6 text-right hidden sm:table-cell text-body-md font-body-md text-on-surface-variant">12</td>
+</tr>
+<tr class="hover:bg-surface-container-lowest transition-colors">
+<td class="py-4 px-6 text-body-lg font-body-lg text-on-surface-variant">44</td>
+<td class="py-4 px-6">
+<div class="flex items-center gap-3">
+<div class="w-10 h-10 rounded-full bg-surface-variant overflow-hidden flex-shrink-0">
+<img alt="User avatar" class="w-full h-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDSqnYnqsPZfNlW2BuTE76vCGSRYqkh-e-TW2ziRTs4Ps51Vef8533--L82oQ8z2neBhUQPx_fuVVTSvSQHlFy01qwzdx8MVayqeepMK1zb3dy18NwgkzCmc3zgcY45F5-UJrWS_tTtsjTYZONWkgZk6BDbN5fya6LLvNPvNK47GoDrxOl3khz75fI5PQ_zmBbrlR869J-2zw3gb9OmF2lKwTxwj-_AKRvRCGyGZVJHVG_JdUtXEAy70nbtF_YymdUr_F7QgIdhyg4"/>
+</div>
+<div>
+<div class="text-body-lg font-body-lg text-on-surface">Alex Johnson</div>
+<div class="text-label-md font-label-md text-on-surface-variant">@alex_j</div>
+</div>
+</div>
+</td>
+<td class="py-4 px-6 hidden md:table-cell">
+<span class="bg-surface-variant text-on-surface-variant px-2 py-1 rounded text-label-md font-label-md">General</span>
+</td>
+<td class="py-4 px-6 text-right">
+<div class="text-body-lg font-body-lg text-on-surface">87.9</div>
+</td>
+<td class="py-4 px-6 text-right hidden sm:table-cell text-body-md font-body-md text-on-surface-variant">45</td>
+</tr>
+</tbody>
+</table>
+</div>
+<!-- Pagination / Load More -->
+<div class="bg-surface-container-low p-4 border-t border-outline-variant flex justify-center">
+<button class="text-primary text-label-md font-label-md hover:underline flex items-center gap-1">
+                    Load More <span class="material-symbols-outlined text-[16px]">expand_more</span>
+</button>
+</div>
+</section>
+</main>
+<!-- Footer -->
+<footer class="bg-surface-container-low dark:bg-inverse-surface border-t border-outline-variant dark:border-outline full-width mt-auto">
+<div class="flex flex-col md:flex-row justify-between items-center w-full px-margin-desktop py-stack-lg max-w-container-max mx-auto gap-stack-md">
+<div class="text-label-md font-label-md font-bold text-primary dark:text-inverse-primary">
+                © 2024 Pitch Prepper. AI-driven professional mentorship.
+            </div>
+<div class="flex flex-wrap justify-center gap-stack-md">
+<a class="text-on-surface-variant dark:text-outline-variant hover:text-primary dark:hover:text-inverse-primary transition-colors text-label-md font-label-md" href="#">Privacy Policy</a>
+<a class="text-on-surface-variant dark:text-outline-variant hover:text-primary dark:hover:text-inverse-primary transition-colors text-label-md font-label-md" href="#">Terms of Service</a>
+<a class="text-on-surface-variant dark:text-outline-variant hover:text-primary dark:hover:text-inverse-primary transition-colors text-label-md font-label-md" href="#">Contact Support</a>
+<a class="text-on-surface-variant dark:text-outline-variant hover:text-primary dark:hover:text-inverse-primary transition-colors text-label-md font-label-md" href="#">Documentation</a>
+</div>
+</div>
+</footer>
+</body></html>
