@@ -449,8 +449,7 @@
   // Returns a FRESH options object each call. This must be a factory, not a
   // shared object: Chart.js mutates the options it's given (it injects default
   // tick callbacks — functions — into the scales). If charts shared one object,
-  // that pollution would leak, and mkChart's structuredClone(config) for the
-  // next chart would throw "function … could not be cloned". A fresh object per
+  // that pollution would leak into the next chart's config. A fresh object per
   // chart keeps each config independent and clone-safe.
   const baseOpts = () => ({
     responsive: true,
@@ -476,13 +475,13 @@
   // Create a chart and remember its config so it can be re-rendered, enlarged,
   // in the click-to-zoom modal.
   function mkChart(id, config) {
-    // Keep a pristine copy for the enlarge-modal, and hand Chart.js its OWN copy
-    // to mutate. Several charts share `baseOpts` by reference; if Chart.js
-    // mutates it (it injects default tick callback functions), the next chart's
-    // config would carry those functions and break cloning. Cloning what we give
-    // Chart.js keeps the shared options pristine.
+    // Store a clone for the click-to-enlarge modal, taken BEFORE Chart.js gets
+    // the config (Chart.js mutates the options it's given). baseOpts() already
+    // hands each chart its own options object so that mutation can't leak
+    // between charts; cloneConfig (rather than structuredClone) also keeps the
+    // stored copy safe if a config ever carries a callback function.
     chartConfigs[id] = cloneConfig(config);
-    return new Chart($(id), cloneConfig(config));
+    return new Chart($(id), config);
   }
 
   function renderCharts(d) {
