@@ -77,11 +77,6 @@ WHISPERX_BATCH_SIZE = int(os.environ.get("WHISPERX_BATCH_SIZE", "16"))
 # analysis falls back to a built-in heuristic.
 LLM_MODEL = os.environ.get("LLM_MODEL", "llama3.1")
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
-<<<<<<< Updated upstream
-# Fixed seed + temperature 0 (see analyze_content) make the LLM's content
-# scores reproducible for the same transcript. Override LLM_SEED if desired.
-LLM_SEED = int(os.environ.get("LLM_SEED", "42"))
-=======
 # The "ideal delivery" rewrite is a simple text-cleanup task (strip fillers,
 # tighten phrasing) rather than reasoning, so it uses a smaller/faster Ollama
 # model than the content analysis above. This matters because the rewrite scales
@@ -108,7 +103,6 @@ ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "").strip()
 ELEVENLABS_MODEL = os.environ.get("ELEVENLABS_MODEL", "eleven_multilingual_v2")
 # Cap the text sent for a rewrite + synthesis — keeps latency and credit use sane.
 IDEAL_DELIVERY_MAX_CHARS = int(os.environ.get("IDEAL_DELIVERY_MAX_CHARS", "5000"))
->>>>>>> Stashed changes
 
 # --- User accounts, sessions & leaderboard (MongoDB) -----------------------
 # Login sessions are signed with this key — set a real SECRET_KEY in production.
