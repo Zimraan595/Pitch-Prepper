@@ -563,27 +563,40 @@
       }),
     });
 
-    // Filler words bar — top 5 most frequent, highest first. Sort explicitly
-    // (desc by count) so order is never ambiguous, and force whole-number ticks
-    // (counts are integers — no 0.5 gridlines).
+    // Filler words bar — the N most-used fillers, highest first.
+    //  • sort desc by count and slice, so only a set number show, in order;
+    //  • maxBarThickness keeps every bar the same, sensible width — a talk with
+    //    just one or two fillers no longer renders giant full-width bars;
+    //  • a clean linear y-axis from 0 with whole-number steps and a little
+    //    headroom (counts are integers — no 0.5 gridlines, no repeated ticks).
+    const FILLER_TOP_N = 8;
     const fillerTop = Object.entries(dl.fillers.by_word || {})
       .sort((a, b) => b[1] - a[1])
-      .slice(0, 5);
+      .slice(0, FILLER_TOP_N);
+    const fillerMax = fillerTop.length ? fillerTop[0][1] : 1;
     charts.filler = mkChart("fillerChart", {
       type: "bar",
       data: {
         labels: fillerTop.map(([w]) => w),
         datasets: [
-          { data: fillerTop.map(([, c]) => c), backgroundColor: "#f87272" },
+          {
+            data: fillerTop.map(([, c]) => c),
+            backgroundColor: "#f87272",
+            borderRadius: 4,
+            maxBarThickness: 44, // uniform width regardless of how many bars
+            categoryPercentage: 0.7,
+            barPercentage: 0.9,
+          },
         ],
       },
       options: {
         responsive: true,
         plugins: { legend: { display: false } },
         scales: {
-          x: { ticks: { color: "#8b93a7" }, grid: { color: "#2a3346" } },
+          x: { ticks: { color: "#8b93a7" }, grid: { display: false } },
           y: {
             beginAtZero: true,
+            suggestedMax: fillerMax + 1, // headroom so the tallest bar isn't flush
             ticks: { color: "#8b93a7", precision: 0, stepSize: 1 },
             grid: { color: "#2a3346" },
           },
