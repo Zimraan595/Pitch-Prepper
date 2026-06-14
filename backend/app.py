@@ -35,6 +35,7 @@ import datetime
 import threading
 import tempfile
 import statistics
+import concurrent.futures
 from functools import wraps
 from collections import Counter
 
@@ -146,6 +147,12 @@ WPM_IDEAL_HIGH = 150
 WPM_TOO_SLOW = 110
 WPM_TOO_FAST = 165
 WINDOW_SECONDS = 15  # bucket size for timeline metrics
+
+# Audio-feature analysis settings. A lower sample rate + larger hop dramatically
+# speed up pitch/volume extraction (especially librosa.pyin) with no meaningful
+# loss for speech coaching metrics.
+ANALYSIS_SR = 16000
+ANALYSIS_HOP = 1024
 
 # --- Filler words -----------------------------------------------------------
 # Multi-word fillers are checked first so "you know" isn't double counted.
@@ -467,14 +474,19 @@ def _transcribe_whisper(audio_path: str) -> dict:
 # ---------------------------------------------------------------------------
 
 def load_audio(audio_path: str):
-    """Load audio as mono waveform. Returns (y, sr, np) or (None, None, None)."""
+    """Load audio as mono waveform. Returns (y, sr, np) or (None, None, None).
+
+    Resampled to ANALYSIS_SR (16 kHz). The feature analyzers (pitch up to 400 Hz,
+    RMS volume, silence) don't need full fidelity, and a lower rate makes the
+    expensive pitch tracking several times faster with no meaningful quality loss.
+    """
     try:
         import numpy as np
         import librosa
     except ImportError:
         return None, None, None
     try:
-        y, sr = librosa.load(audio_path, sr=None, mono=True)
+        y, sr = librosa.load(audio_path, sr=ANALYSIS_SR, mono=True)
         return y, sr, np
     except Exception:
         return None, None, None
@@ -561,8 +573,10 @@ def analyze_pitch(y, sr, np) -> dict:
         return {"available": False, "reason": "Librosa/numpy not available."}
     try:
         import librosa
+        # Larger hop = far fewer frames for pyin's Viterbi decode (the slow part),
+        # which is plenty of resolution for pitch-variation metrics.
         f0, voiced_flag, _ = librosa.pyin(
-            y, fmin=70, fmax=400, sr=sr, frame_length=2048,
+            y, fmin=70, fmax=400, sr=sr, frame_length=2048, hop_length=ANALYSIS_HOP,
         )
     except Exception as exc:
         return {"available": False, "reason": f"Pitch extraction failed: {exc}"}
@@ -581,7 +595,7 @@ def analyze_pitch(y, sr, np) -> dict:
 
     # Downsampled timeline for plotting.
     hop = max(1, f0.size // 200)
-    times = librosa.times_like(f0, sr=sr)
+    times = librosa.times_like(f0, sr=sr, hop_length=ANALYSIS_HOP)
     timeline = []
     for i in range(0, f0.size, hop):
         val = f0[i]
@@ -611,7 +625,7 @@ def analyze_volume(y, sr, np) -> dict:
         return {"available": False, "reason": "Librosa/numpy not available."}
     try:
         import librosa
-        frame, hop = 2048, 512
+        frame, hop = 2048, ANALYSIS_HOP
         rms = librosa.feature.rms(y=y, frame_length=frame, hop_length=hop)[0]
         times = librosa.frames_to_time(np.arange(len(rms)), sr=sr, hop_length=hop)
     except Exception as exc:
@@ -1344,21 +1358,29 @@ def run_analysis(audio_path: str) -> dict:
     if y is None:
         warnings.append("Librosa/numpy unavailable — pitch/volume analysis skipped.")
 
-    delivery = {
-        "rate": analyze_speaking_rate(words, duration),
-        "pitch": analyze_pitch(y, sr, np),
-        "volume": analyze_volume(y, sr, np),
-        "pauses": analyze_pauses(words, duration, y, sr, np),
-        "fillers": analyze_fillers(words, text, duration),
-    }
-
+    # Cheap text analyzers first (the LLM call below depends on them).
     transitions = analyze_transitions(text)
-
     # Buzzwords are flagged deterministically, then handed to the content LLM
     # call, which vets them for context; its verdict feeds back to suppress
-    # false positives. One round trip, no extra latency.
+    # false positives.
     buzzwords = analyze_buzzwords(text)
-    content = analyze_content(text, transitions, list((buzzwords.get("by_word") or {}).keys()))
+    flagged = list((buzzwords.get("by_word") or {}).keys())
+
+    # Run the LLM content analysis (network/Ollama latency) concurrently with the
+    # CPU-heavy audio feature extraction (pitch/volume). Both release the GIL
+    # during their slow work, so this overlaps instead of adding up — typically
+    # the single biggest speedup for total analysis time.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+        content_future = ex.submit(analyze_content, text, transitions, flagged)
+        delivery = {
+            "rate": analyze_speaking_rate(words, duration),
+            "pitch": analyze_pitch(y, sr, np),
+            "volume": analyze_volume(y, sr, np),
+            "pauses": analyze_pauses(words, duration, y, sr, np),
+            "fillers": analyze_fillers(words, text, duration),
+        }
+        content = content_future.result()
+
     if content.get("llm_error"):
         warnings.append(f"LLM content analysis failed: {content['llm_error']}")
     buzzwords = _apply_buzzword_review(buzzwords, content.pop("buzzword_review", None))
