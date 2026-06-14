@@ -1,30 +1,85 @@
-/* Pitch Prepper — frontend logic */
+/* Pitch Prepper — frontend logic.
+   Single-page app served by Flask at `/`. Switches between Home / Results /
+   Leaderboard views client-side and talks to the backend JSON API:
+     /health, /api/me, /api/leaderboard, /analyze (+ /analyze/status/<id>),
+     /api/ideal-delivery, /api/login, /api/register, /api/logout.
+   Visual design = Stitch (Tailwind); all behavior wired here. */
 (() => {
   const $ = (id) => document.getElementById(id);
 
+  // ---- Semantic colors (match DESIGN.md: good ≥75 emerald, fair 55–74 amber,
+  //      poor <55 rose, unknown neutral) -------------------------------------
+  const C = {
+    primary: "#3525cd",
+    primaryContainer: "#4f46e5",
+    good: "#006c49",
+    fair: "#b45309",
+    poor: "#ba1a1a",
+    neutral: "#777587",
+    axis: "#464555",
+    grid: "#e4e1ee",
+  };
+  const scoreColor = (s) =>
+    s == null ? C.neutral : s >= 75 ? C.good : s >= 55 ? C.fair : C.poor;
+  const scoreLabel = (s) =>
+    s == null
+      ? ""
+      : s >= 85
+        ? "Excellent"
+        : s >= 75
+          ? "Strong"
+          : s >= 55
+            ? "Fair"
+            : "Needs work";
+
+  // ---- App state -----------------------------------------------------------
   let selectedBlob = null;
   let selectedName = null;
   let mediaRecorder = null;
   let chunks = [];
+  let recordStart = 0;
+  let minRecordingSec = 15;
   let charts = {};
-  let chartConfigs = {}; // canvas id -> Chart config (for click-to-enlarge)
-  let recordStart = 0; // ms timestamp when recording began
-  let minRecordingSec = 15; // overwritten from /health
+  let chartConfigs = {};
+  let lastResult = null;
+  const authState = { user: null, dbAvailable: false };
 
-  const fileInput = $("fileInput");
-  const recordBtn = $("recordBtn");
-  const analyzeBtn = $("analyzeBtn");
+  // =========================================================================
+  // View switching
+  // =========================================================================
+  function showView(name) {
+    document.querySelectorAll(".view").forEach((v) => v.classList.add("hidden"));
+    const el = $("view-" + name);
+    if (el) el.classList.remove("hidden");
+    document.querySelectorAll(".nav-link").forEach((b) =>
+      b.classList.toggle("active", b.dataset.view === name),
+    );
+    if (name === "results") {
+      const has = !!lastResult;
+      $("resultsEmpty").classList.toggle("hidden", has);
+      $("resultsContent").classList.toggle("hidden", !has);
+    }
+    if (name === "leaderboard") loadLeaderboard();
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+  document.addEventListener("click", (e) => {
+    const t = e.target.closest("[data-view]");
+    if (t) showView(t.dataset.view);
+  });
 
-  // ---- Input handling ------------------------------------------------------
-  fileInput.addEventListener("change", () => {
-    if (fileInput.files.length) {
-      selectedBlob = fileInput.files[0];
-      selectedName = fileInput.files[0].name;
+  // =========================================================================
+  // Input: upload + record
+  // =========================================================================
+  $("fileInput").addEventListener("change", (e) => {
+    if (e.target.files.length) {
+      selectedBlob = e.target.files[0];
+      selectedName = e.target.files[0].name;
+      $("recordStatus").textContent = "Ready to record";
       updateSelection();
     }
   });
 
-  recordBtn.addEventListener("click", async () => {
+  $("recordBtn").addEventListener("click", async () => {
     if (mediaRecorder && mediaRecorder.state === "recording") {
       mediaRecorder.stop();
       return;
@@ -33,18 +88,15 @@
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       chunks = [];
       mediaRecorder = new MediaRecorder(stream);
-      mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
+      mediaRecorder.ondataavailable = (ev) => chunks.push(ev.data);
       mediaRecorder.onstop = () => {
         stream.getTracks().forEach((t) => t.stop());
-        recordBtn.textContent = "● Start recording";
-        recordBtn.classList.remove("recording");
+        setRecordingUI(false);
         const elapsed = (Date.now() - recordStart) / 1000;
         if (elapsed < minRecordingSec) {
-          // Too short — reject client-side so they don't waste an analysis.
           selectedBlob = null;
           selectedName = null;
-          $("recordStatus").textContent =
-            `Recording was only ${elapsed.toFixed(0)}s — record at least ${minRecordingSec}s.`;
+          $("recordStatus").textContent = `Only ${elapsed.toFixed(0)}s — record at least ${minRecordingSec}s.`;
           updateSelection();
           return;
         }
@@ -55,71 +107,80 @@
       };
       mediaRecorder.start();
       recordStart = Date.now();
-      recordBtn.textContent = "■ Stop recording";
-      recordBtn.classList.add("recording");
+      setRecordingUI(true);
       $("recordStatus").textContent = `Recording… (min ${minRecordingSec}s)`;
-    } catch (err) {
+    } catch {
       showError("Microphone access denied or unavailable.");
     }
   });
 
-  function updateSelection() {
-    $("selected").textContent = selectedName ? `Selected: ${selectedName}` : "";
-    analyzeBtn.disabled = !selectedBlob;
+  function setRecordingUI(on) {
+    const btn = $("recordBtn");
+    $("recordBtnLabel").textContent = on ? "Stop Recording" : "Start Recording";
+    btn.classList.toggle("animate-pulse", on);
   }
 
-  // ---- Analyze -------------------------------------------------------------
-  analyzeBtn.addEventListener("click", async () => {
+  function updateSelection() {
+    $("selected").textContent = selectedName ? `Selected: ${selectedName}` : "";
+    $("analyzeBtn").disabled = !selectedBlob;
+  }
+
+  // =========================================================================
+  // Analyze flow (async submit + poll)
+  // =========================================================================
+  $("analyzeBtn").addEventListener("click", async () => {
     if (!selectedBlob) return;
     hide("error");
-    hide("results");
+    $("inputArea").classList.add("hidden");
     show("loading");
-    analyzeBtn.disabled = true;
+    $("analyzeBtn").disabled = true;
 
     const form = new FormData();
     form.append("audio", selectedBlob, selectedName);
     setLoadingMsg("Uploading…");
 
     try {
-      // The server analyzes in the background and returns a job id right away,
-      // so we never hold one long request open (which browsers/proxies drop and
-      // surface as a "network error"). We then poll until it's finished.
       const resp = await fetch("/analyze", { method: "POST", body: form });
       const data = await resp.json();
       if (!resp.ok || data.error) {
-        hide("loading");
+        endLoading();
         showError(data.error || `Request failed (${resp.status}).`);
         return;
       }
       const result = await pollAnalysis(data.job_id);
-      hide("loading");
+      endLoading();
       if (!result) {
         showError("Analysis timed out. Please try again.");
       } else if (result.error) {
         showError(result.error);
       } else {
+        lastResult = result;
         render(result);
-        show("results");
+        showView("results");
         handleSaved(result);
       }
     } catch (err) {
-      hide("loading");
+      endLoading();
       showError("Network error: " + err.message);
     } finally {
-      analyzeBtn.disabled = false;
+      $("analyzeBtn").disabled = false;
     }
   });
 
-  // Poll the lightweight status endpoint until the background analysis finishes.
-  // Each request is short, so a brief network blip just retries instead of
-  // failing the whole analysis. Returns the result, {error}, or null on timeout.
+  function endLoading() {
+    hide("loading");
+    $("inputArea").classList.remove("hidden");
+  }
+
   async function pollAnalysis(jobId) {
     const started = Date.now();
-    const MAX_MS = 20 * 60 * 1000;   // generous ceiling for very long talks
+    const MAX_MS = 20 * 60 * 1000;
     let consecutiveErrors = 0;
     while (Date.now() - started < MAX_MS) {
       await sleep(2000);
-      setLoadingMsg(`Transcribing and analyzing… (${Math.round((Date.now() - started) / 1000)}s)`);
+      setLoadingMsg(
+        `Transcribing and analyzing… (${Math.round((Date.now() - started) / 1000)}s)`,
+      );
       let d;
       try {
         const r = await fetch(`/analyze/status/${jobId}`);
@@ -130,24 +191,20 @@
         d = await r.json();
         consecutiveErrors = 0;
       } catch (err) {
-        // Transient — keep polling through short outages.
         if (++consecutiveErrors > 30) throw err;
         continue;
       }
       if (d.state === "done") return d.result;
       if (d.state === "error") return { error: d.error };
     }
-    return null;  // timed out
+    return null;
   }
 
-  // Show whether the result was recorded to the leaderboard, then refresh it.
-  function handleSaved(data) {
+  function handleSaved(d) {
     const note = $("savedNote");
-    if (data.saved_to_leaderboard) {
+    if (d.saved_to_leaderboard) {
       const score =
-        data.scores && data.scores.overall != null
-          ? Math.round(data.scores.overall)
-          : "?";
+        d.scores && d.scores.overall != null ? Math.round(d.scores.overall) : "?";
       note.textContent = `✓ Saved to the leaderboard — you scored ${score}.`;
       note.classList.remove("hidden");
       loadLeaderboard();
@@ -159,78 +216,117 @@
     }
   }
 
-  // ---- Rendering -----------------------------------------------------------
+  // =========================================================================
+  // Rendering
+  // =========================================================================
   function render(d) {
+    renderHeader(d);
     renderScores(d.scores);
     renderMetrics(d);
     renderFeedback(d.feedback);
+    renderIdeal(d);
     renderCharts(d);
     renderContent(d.content);
     renderLanguage(d.language);
-    renderIdealDelivery(d);
     $("transcript").textContent = d.transcript || "";
     $("warnings").textContent = (d.warnings || []).join("  ·  ");
   }
 
-  function scoreColor(s) {
-    if (s == null) return "#8b93a7";
-    if (s >= 75) return "#36d399";
-    if (s >= 55) return "#fbbd23";
-    return "#f87272";
+  function renderHeader(d) {
+    const lang = d.language_detected ? d.language_detected.toUpperCase() : "";
+    $("resultsSubtitle").textContent = lang ? `Detected language: ${lang}` : "";
+    const chips = [];
+    if (d.duration_sec != null) chips.push(chip("schedule", fmtDuration(d.duration_sec)));
+    if (d.word_count != null) chips.push(chip("mic", `${d.word_count} words`));
+    $("resultsMetaChips").innerHTML = chips.join("");
   }
+  const chip = (icon, text) =>
+    `<span class="inline-flex items-center gap-1 px-3 py-1 bg-surface-container text-on-surface text-xs font-label tracking-wide rounded-full"><span class="material-symbols-outlined text-[16px]">${icon}</span>${esc(text)}</span>`;
 
   function renderScores(s) {
-    const o = s.overall ?? 0;
-    const circle = $("overallScore");
-    circle.textContent = s.overall != null ? Math.round(o) : "–";
-    circle.style.background = `conic-gradient(${scoreColor(o)} ${o * 3.6}deg, var(--card2) 0deg)`;
-    setBar("Delivery", s.delivery);
-    setBar("Language", s.language);
-    setBar("Content", s.content);
-  }
+    if (!s) return;
+    const o = s.overall;
+    $("overallScore").textContent = o != null ? Math.round(o) : "–";
+    const lbl = $("overallLabel");
+    lbl.textContent = scoreLabel(o);
+    lbl.style.color = scoreColor(o);
+    const C2 = 2 * Math.PI * 45; // 282.74
+    const arc = $("gaugeArc");
+    arc.style.stroke = scoreColor(o);
+    arc.style.strokeDashoffset = String(C2 * (1 - (o || 0) / 100));
 
-  function setBar(name, val) {
-    $("score" + name).textContent = val != null ? Math.round(val) : "–";
-    const bar = $("bar" + name);
-    bar.style.width = (val || 0) + "%";
-    bar.style.background = scoreColor(val);
-  }
-
-  function metric(val, lbl) {
-    return `<div class="metric"><div class="val">${val}</div><div class="lbl">${lbl}</div></div>`;
+    const rows = [
+      ["Delivery", s.delivery, "record_voice_over"],
+      ["Language", s.language, "language"],
+      ["Content", s.content, "article"],
+    ];
+    $("subScores").innerHTML = rows
+      .map(
+        ([name, val, icon]) => `
+      <div>
+        <div class="flex justify-between items-end mb-2">
+          <span class="font-body font-medium text-on-surface flex items-center gap-2">
+            <span class="material-symbols-outlined text-primary text-[20px]">${icon}</span>${name}
+          </span>
+          <span class="font-body text-on-surface-variant">${val != null ? Math.round(val) : "–"}/100</span>
+        </div>
+        <div class="h-2 w-full bg-surface-container rounded-full overflow-hidden">
+          <div class="h-full rounded-full transition-all duration-700" style="width:${val || 0}%;background:${scoreColor(val)}"></div>
+        </div>
+      </div>`,
+      )
+      .join("");
   }
 
   function renderMetrics(d) {
-    const dl = d.delivery,
-      lg = d.language;
-    const m = [];
-    m.push(metric(dl.rate.wpm ?? "–", "Words / min"));
-    m.push(metric(dl.pitch.variability_score ?? "–", "Pitch variation"));
-    m.push(metric(dl.volume.consistency_score ?? "–", "Volume consistency"));
-    m.push(metric(dl.fillers.total ?? "–", "Filler words"));
-    m.push(metric(dl.pauses.score ?? "–", "Pause quality"));
-    m.push(metric(d.content.score ?? "–", "Structure score"));
-    m.push(
-      metric(
-        d.duration_sec ? (d.duration_sec / 60).toFixed(1) : "–",
-        "Minutes",
-      ),
-    );
-    m.push(metric(d.word_count ?? "–", "Total words"));
-    $("metrics").innerHTML = m.join("");
+    const dl = d.delivery || {},
+      r = dl.rate || {},
+      p = dl.pitch || {},
+      v = dl.volume || {},
+      f = dl.fillers || {},
+      pa = dl.pauses || {};
+    const cards = [
+      [r.wpm ?? "–", "Words / min"],
+      [p.variability_score ?? "–", "Pitch variation"],
+      [v.consistency_score ?? "–", "Volume consistency"],
+      [f.total ?? "–", "Filler words"],
+      [pa.score ?? "–", "Pause quality"],
+      [d.content && d.content.score != null ? d.content.score : "–", "Structure score"],
+      [d.duration_sec ? (d.duration_sec / 60).toFixed(1) : "–", "Minutes"],
+      [d.word_count ?? "–", "Total words"],
+    ];
+    $("metrics").innerHTML = cards
+      .map(
+        ([val, lbl]) => `
+      <div class="bg-surface-container-lowest rounded-xl border border-outline-variant shadow-sm p-4">
+        <div class="font-label tracking-wide text-on-surface-variant uppercase text-xs">${esc(lbl)}</div>
+        <div class="font-metric font-bold text-3xl text-on-surface mt-1">${esc(String(val))}</div>
+      </div>`,
+      )
+      .join("");
   }
 
   function renderFeedback(fb) {
     if (!fb) return;
+    const badge = ["bg-error-container text-on-error-container", "bg-tertiary-fixed text-on-tertiary-fixed", "bg-primary-fixed text-on-primary-fixed"];
     $("topRecs").innerHTML = (fb.top_recommendations || [])
-      .map((r) => `<li>${esc(r)}</li>`)
+      .map(
+        (rec, i) => `
+      <div class="p-4 bg-surface-container-low rounded-lg border border-outline-variant flex items-start gap-3">
+        <div class="w-8 h-8 rounded-full ${badge[i] || badge[2]} flex items-center justify-center shrink-0 font-bold text-sm">${i + 1}</div>
+        <p class="font-body text-sm text-on-surface-variant leading-relaxed">${esc(rec)}</p>
+      </div>`,
+      )
       .join("");
-    $("strengths").innerHTML = (fb.strengths || [])
-      .map((r) => `<li>${esc(r)}</li>`)
-      .join("");
+
+    const li = (txt, icon, color) =>
+      `<li class="flex items-start gap-2 font-body text-sm text-on-surface-variant"><span class="material-symbols-outlined text-[18px] ${color} mt-0.5">${icon}</span><span>${esc(txt)}</span></li>`;
+    $("strengths").innerHTML =
+      (fb.strengths || []).map((t) => li(t, "check", "text-secondary")).join("") ||
+      li("Solid delivery overall.", "check", "text-secondary");
     $("improvements").innerHTML =
-      (fb.improvements || []).map((r) => `<li>${esc(r)}</li>`).join("") ||
-      "<li class='muted'>None — nice work.</li>";
+      (fb.improvements || []).map((t) => li(t, "arrow_upward", "text-tertiary")).join("") ||
+      `<li class="font-body text-sm text-on-surface-variant">None — nice work.</li>`;
   }
 
   function renderContent(c) {
@@ -241,12 +337,12 @@
     $("contentCats").innerHTML = Object.entries(cats)
       .map(
         ([name, info]) => `
-      <div class="cat">
-        <div class="head">
-          <span class="name">${esc(name)}</span>
-          <span class="pts" style="color:${scoreColor(info.score)}">${info.score ?? "–"}</span>
+      <div class="p-4 bg-surface-container-low rounded-lg border border-outline-variant">
+        <div class="flex justify-between items-center mb-1">
+          <span class="font-headline font-semibold text-on-surface capitalize">${esc(name)}</span>
+          <span class="font-metric font-bold text-lg" style="color:${scoreColor(info.score)}">${info.score ?? "–"}</span>
         </div>
-        <p>${esc(info.feedback || "")}</p>
+        <p class="font-body text-sm text-on-surface-variant">${esc(info.feedback || "")}</p>
       </div>`,
       )
       .join("");
@@ -258,74 +354,63 @@
       bz = lg.buzzwords || {},
       rp = lg.repetition || {},
       kw = lg.keywords || {};
-    const pills = (obj) =>
-      Object.entries(obj || {})
-        .map(([k, v]) => `<span class="pill">${esc(k)} ×${v}</span>`)
-        .join("") || "<span class='muted'>none</span>";
-    const left = `
-      <div>
-        <h3>Transitions used (${tr.total ?? 0})</h3>
-        <div>${pills(tr.by_phrase)}</div>
-        <h3 style="margin-top:1rem">Keywords reinforced</h3>
-        <div>${(kw.keywords || []).map((k) => `<span class="pill">${esc(k.word)} ×${k.count}</span>`).join("") || "<span class='muted'>none</span>"}</div>
-      </div>`;
-    const right = `
-      <div>
-        <h3>Buzzwords flagged <span class="muted" style="font-weight:400;font-size:.8em">(advisory — doesn't affect your score)</span></h3>
-        <div>${pills(bz.by_word)}</div>
-        ${
-          Object.keys(bz.suggestions || {}).length
-            ? `<p class="muted" style="margin-top:.5rem">Try: ` +
-              Object.entries(bz.suggestions)
-                .map(([b, a]) => `<b>${esc(b)}</b> → ${esc(a)}`)
-                .join("; ") +
-              "</p>"
-            : ""
-        }
-        ${
-          Object.keys(bz.suppressed || {}).length
-            ? `<p class="muted" style="margin-top:.35rem;font-size:.85em">Not flagged — used appropriately in context: ` +
-              Object.keys(bz.suppressed)
-                .map((w) => esc(w))
-                .join(", ") +
-              "</p>"
-            : ""
-        }
-        <h3 style="margin-top:1rem">Repeated words / phrases</h3>
-        <div>${pills(Object.assign({}, rp.repeated_words, rp.repeated_phrases))}</div>
-      </div>`;
+    const pill = (k, v) =>
+      `<span class="inline-block px-3 py-1 m-0.5 rounded-full bg-primary-fixed text-on-primary-fixed text-xs font-label">${esc(k)}${v != null ? " ×" + v : ""}</span>`;
+    const pills = (obj) => {
+      const e = Object.entries(obj || {});
+      return e.length
+        ? e.map(([k, v]) => pill(k, v)).join("")
+        : `<span class="font-body text-sm text-on-surface-variant">none</span>`;
+    };
+    const h3 = (t, extra = "") =>
+      `<h3 class="font-headline font-semibold text-on-surface mt-stack-md first:mt-0">${t}${extra}</h3>`;
+
+    const left = `<div>
+      ${h3(`Transitions used (${tr.total ?? 0})`)}
+      <div class="mt-1">${pills(tr.by_phrase)}</div>
+      ${h3("Keywords reinforced")}
+      <div class="mt-1">${(kw.keywords || []).length ? (kw.keywords || []).map((k) => pill(k.word, k.count)).join("") : `<span class="font-body text-sm text-on-surface-variant">none</span>`}</div>
+    </div>`;
+
+    const sugg = Object.entries(bz.suggestions || {});
+    const supp = Object.keys(bz.suppressed || {});
+    const right = `<div>
+      ${h3("Buzzwords flagged", ` <span class="font-body font-normal text-xs text-on-surface-variant">(advisory — doesn't affect your score)</span>`)}
+      <div class="mt-1">${pills(bz.by_word)}</div>
+      ${sugg.length ? `<p class="font-body text-xs text-on-surface-variant mt-2">Try: ${sugg.map(([b, a]) => `<b>${esc(b)}</b> → ${esc(a)}`).join("; ")}</p>` : ""}
+      ${supp.length ? `<p class="font-body text-xs text-on-surface-variant mt-1">Not flagged — used appropriately in context: ${supp.map(esc).join(", ")}</p>` : ""}
+      ${h3("Repeated words / phrases")}
+      <div class="mt-1">${pills(Object.assign({}, rp.repeated_words, rp.repeated_phrases))}</div>
+    </div>`;
     $("languageDetails").innerHTML = left + right;
   }
 
-  // ---- Ideal delivery (ElevenLabs TTS) -------------------------------------
+  // =========================================================================
+  // Ideal delivery (ElevenLabs TTS)
+  // =========================================================================
   let idealTranscript = "";
   let idealSentences = [];
   let idealSelected = new Set();
 
-  // Split into sentences for click-to-select. The lookahead requires whitespace
-  // or end-of-text after the terminator so decimals ("12.5") aren't split.
   function splitSentences(text) {
     return (text.match(/[\s\S]*?[.!?]+(?=\s|$)|[\s\S]+$/g) || [text])
       .map((s) => s.trim())
       .filter(Boolean);
   }
 
-  function renderIdealDelivery(d) {
+  function renderIdeal(d) {
     resetIdeal();
     idealTranscript = d.transcript || "";
     idealSentences = idealTranscript ? splitSentences(idealTranscript) : [];
     idealSelected = new Set();
     renderIdealPicker();
     updateIdealSelInfo();
-    // Optional, opt-in cloud feature: only surface it when the server has an
-    // ElevenLabs key configured. Otherwise stay fully local and hide the card.
     $("idealCard").classList.toggle(
       "hidden",
       !(d.ideal_delivery_available && idealTranscript),
     );
   }
 
-  // Render the transcript as clickable sentences so the user can improve a part.
   function renderIdealPicker() {
     const picker = $("idealPicker");
     picker.innerHTML = "";
@@ -347,13 +432,8 @@
     });
   }
 
-  // Selected sentences, joined back in their original order.
-  function idealSelectedText() {
-    return [...idealSelected]
-      .sort((a, b) => a - b)
-      .map((i) => idealSentences[i])
-      .join(" ");
-  }
+  const idealSelectedText = () =>
+    [...idealSelected].sort((a, b) => a - b).map((i) => idealSentences[i]).join(" ");
 
   function updateIdealSelInfo() {
     const n = idealSelected.size;
@@ -362,8 +442,7 @@
       hide("idealClear");
     } else {
       const words = idealSelectedText().split(/\s+/).filter(Boolean).length;
-      $("idealSelInfo").textContent =
-        `Improving: ${n} selected sentence${n > 1 ? "s" : ""} (~${words} words)`;
+      $("idealSelInfo").textContent = `Improving: ${n} selected sentence${n > 1 ? "s" : ""} (~${words} words)`;
       show("idealClear");
     }
   }
@@ -376,9 +455,8 @@
     audio.pause();
     audio.removeAttribute("src");
     audio.load();
-    const btn = $("idealBtn");
-    btn.disabled = false;
-    btn.textContent = "▶ Generate ideal delivery";
+    $("idealBtn").disabled = false;
+    $("idealBtnLabel").textContent = "Generate ideal delivery";
   }
 
   async function generateIdeal() {
@@ -387,8 +465,7 @@
     const btn = $("idealBtn");
     btn.disabled = true;
     const scope = idealSelected.size ? "selected part" : "whole talk";
-    $("idealStatus").textContent =
-      ` Rewriting the ${scope} and synthesizing… this can take a few seconds.`;
+    $("idealStatus").textContent = ` Rewriting the ${scope} and synthesizing…`;
     try {
       const r = await fetch("/api/ideal-delivery", {
         method: "POST",
@@ -397,8 +474,7 @@
       });
       const d = await r.json();
       if (!r.ok || d.error) {
-        $("idealStatus").textContent =
-          " " + (d.error || `Request failed (${r.status}).`);
+        $("idealStatus").textContent = " " + (d.error || `Request failed (${r.status}).`);
         btn.disabled = false;
         return;
       }
@@ -413,64 +489,49 @@
           : " Ready — press play.";
       } else {
         audio.classList.add("hidden");
-        $("idealStatus").textContent =
-          " " + (d.audio_error || d.note || "Script ready (no audio).");
+        $("idealStatus").textContent = " " + (d.audio_error || d.note || "Script ready (no audio).");
       }
       show("idealOutput");
-      btn.textContent = "↻ Regenerate";
+      $("idealBtnLabel").textContent = "Regenerate";
       btn.disabled = false;
     } catch (err) {
       $("idealStatus").textContent = " Network error: " + err.message;
       btn.disabled = false;
     }
   }
-
   $("idealBtn").addEventListener("click", generateIdeal);
   $("idealClear").addEventListener("click", () => {
     idealSelected.clear();
-    $("idealPicker")
-      .querySelectorAll(".sent.selected")
-      .forEach((s) => s.classList.remove("selected"));
+    $("idealPicker").querySelectorAll(".sent.selected").forEach((s) => s.classList.remove("selected"));
     updateIdealSelInfo();
   });
 
-  // ---- Charts --------------------------------------------------------------
+  // =========================================================================
+  // Charts
+  // =========================================================================
   function destroyCharts() {
     Object.values(charts).forEach((c) => c && c.destroy());
     charts = {};
   }
-
-  // Returns a FRESH options object each call. This must be a factory, not a
-  // shared object: Chart.js mutates the options it's given (it injects default
-  // tick callbacks — functions — into the scales). If charts shared one object,
-  // that pollution would leak, and mkChart's structuredClone(config) for the
-  // next chart would throw "function … could not be cloned". A fresh object per
-  // chart keeps each config independent and clone-safe.
   const baseOpts = () => ({
     responsive: true,
+    maintainAspectRatio: false,
     plugins: { legend: { display: false } },
     scales: {
-      x: { ticks: { color: "#8b93a7" }, grid: { color: "#2a3346" } },
-      y: { ticks: { color: "#8b93a7" }, grid: { color: "#2a3346" } },
+      x: { ticks: { color: C.axis }, grid: { color: C.grid } },
+      y: { ticks: { color: C.axis }, grid: { color: C.grid } },
     },
   });
-
-  // Create a chart and remember its config so it can be re-rendered, enlarged,
-  // in the click-to-zoom modal.
   function mkChart(id, config) {
-    // Store a pristine deep copy BEFORE Chart.js mutates `config` (it attaches
-    // internal, non-cloneable state). Cloning the mutated object later would
-    // throw DataCloneError and silently break click-to-enlarge.
     chartConfigs[id] = structuredClone(config);
     return new Chart($(id), config);
   }
 
   function renderCharts(d) {
     destroyCharts();
-    const dl = d.delivery;
+    const dl = d.delivery || {};
 
-    // WPM timeline
-    const wpm = dl.rate.timeline || [];
+    const wpm = (dl.rate && dl.rate.timeline) || [];
     charts.wpm = mkChart("wpmChart", {
       type: "line",
       data: {
@@ -478,16 +539,12 @@
         datasets: [
           {
             data: wpm.map((p) => p.wpm),
-            borderColor: "#5b8cff",
-            backgroundColor: "rgba(91,140,255,.15)",
+            borderColor: C.primary,
+            backgroundColor: "rgba(53,37,205,.12)",
             fill: true,
             tension: 0.3,
             pointBackgroundColor: wpm.map((p) =>
-              p.label === "too_fast"
-                ? "#f87272"
-                : p.label === "too_slow"
-                  ? "#fbbd23"
-                  : "#5b8cff",
+              p.label === "too_fast" ? C.poor : p.label === "too_slow" ? C.fair : C.primary,
             ),
           },
         ],
@@ -495,26 +552,17 @@
       options: baseOpts(),
     });
 
-    // Pitch
-    const pitch = (dl.pitch.timeline || []).filter((p) => p.hz != null);
+    const pitch = ((dl.pitch && dl.pitch.timeline) || []).filter((p) => p.hz != null);
     charts.pitch = mkChart("pitchChart", {
       type: "line",
       data: {
         labels: pitch.map((p) => p.t),
-        datasets: [
-          {
-            data: pitch.map((p) => p.hz),
-            borderColor: "#36d399",
-            pointRadius: 0,
-            tension: 0.3,
-          },
-        ],
+        datasets: [{ data: pitch.map((p) => p.hz), borderColor: C.good, pointRadius: 0, tension: 0.3 }],
       },
       options: baseOpts(),
     });
 
-    // Volume
-    const vol = dl.volume.timeline || [];
+    const vol = (dl.volume && dl.volume.timeline) || [];
     charts.volume = mkChart("volumeChart", {
       type: "line",
       data: {
@@ -522,8 +570,8 @@
         datasets: [
           {
             data: vol.map((p) => p.db),
-            borderColor: "#fbbd23",
-            backgroundColor: "rgba(251,189,35,.15)",
+            borderColor: C.primaryContainer,
+            backgroundColor: "rgba(79,70,229,.15)",
             fill: true,
             pointRadius: 0,
             tension: 0.3,
@@ -533,15 +581,9 @@
       options: baseOpts(),
     });
 
-    // Pause timeline (scatter: time vs duration, colored by type)
-    const pauses = dl.pauses.timeline || [];
+    const pauses = (dl.pauses && dl.pauses.timeline) || [];
     const colorOf = (t) =>
-      ({
-        strategic: "#36d399",
-        long_awkward: "#f87272",
-        hesitation: "#fbbd23",
-        normal: "#5b8cff",
-      })[t] || "#5b8cff";
+      ({ strategic: C.good, long_awkward: C.poor, hesitation: C.fair, normal: C.primary })[t] || C.primary;
     charts.pause = mkChart("pauseChart", {
       type: "scatter",
       data: {
@@ -555,109 +597,70 @@
       },
       options: Object.assign(baseOpts(), {
         scales: {
-          x: {
-            title: { display: true, text: "time (s)", color: "#8b93a7" },
-            ticks: { color: "#8b93a7" },
-            grid: { color: "#2a3346" },
-          },
-          y: {
-            title: { display: true, text: "pause (s)", color: "#8b93a7" },
-            ticks: { color: "#8b93a7" },
-            grid: { color: "#2a3346" },
-          },
+          x: { title: { display: true, text: "time (s)", color: C.axis }, ticks: { color: C.axis }, grid: { color: C.grid } },
+          y: { title: { display: true, text: "pause (s)", color: C.axis }, ticks: { color: C.axis }, grid: { color: C.grid } },
         },
       }),
     });
 
-    // Filler words bar — the N most-used fillers, highest first.
-    //  • sort desc by count and slice, so only a set number show, in order;
-    //  • maxBarThickness keeps every bar the same, sensible width — a talk with
-    //    just one or two fillers no longer renders giant full-width bars;
-    //  • a clean linear y-axis from 0 with whole-number steps and a little
-    //    headroom (counts are integers — no 0.5 gridlines, no repeated ticks).
-    const FILLER_TOP_N = 8;
-    const fillerTop = Object.entries(dl.fillers.by_word || {})
+    const fillerTop = Object.entries((dl.fillers && dl.fillers.by_word) || {})
       .sort((a, b) => b[1] - a[1])
-      .slice(0, FILLER_TOP_N);
+      .slice(0, 8);
     const fillerMax = fillerTop.length ? fillerTop[0][1] : 1;
     charts.filler = mkChart("fillerChart", {
       type: "bar",
       data: {
         labels: fillerTop.map(([w]) => w),
-        datasets: [
-          {
-            data: fillerTop.map(([, c]) => c),
-            backgroundColor: "#f87272",
-            borderRadius: 4,
-            maxBarThickness: 44, // uniform width regardless of how many bars
-            categoryPercentage: 0.7,
-            barPercentage: 0.9,
-          },
-        ],
+        datasets: [{ data: fillerTop.map(([, c]) => c), backgroundColor: C.poor, borderRadius: 4, maxBarThickness: 44 }],
       },
       options: {
         responsive: true,
+        maintainAspectRatio: false,
         plugins: { legend: { display: false } },
         scales: {
-          x: { ticks: { color: "#8b93a7" }, grid: { display: false } },
-          y: {
-            beginAtZero: true,
-            suggestedMax: fillerMax + 1, // headroom so the tallest bar isn't flush
-            ticks: { color: "#8b93a7", precision: 0, stepSize: 1 },
-            grid: { color: "#2a3346" },
-          },
+          x: { ticks: { color: C.axis }, grid: { display: false } },
+          y: { beginAtZero: true, suggestedMax: fillerMax + 1, ticks: { color: C.axis, precision: 0, stepSize: 1 }, grid: { color: C.grid } },
         },
       },
     });
 
-    // Content radar
     const cats = (d.content && d.content.categories) || {};
     charts.content = mkChart("contentChart", {
       type: "radar",
       data: {
         labels: Object.keys(cats),
-        datasets: [
-          {
-            data: Object.values(cats).map((c) => c.score || 0),
-            borderColor: "#5b8cff",
-            backgroundColor: "rgba(91,140,255,.25)",
-          },
-        ],
+        datasets: [{ data: Object.values(cats).map((c) => c.score || 0), borderColor: C.primary, backgroundColor: "rgba(53,37,205,.2)" }],
       },
       options: {
         responsive: true,
+        maintainAspectRatio: false,
         plugins: { legend: { display: false } },
         scales: {
           r: {
             min: 0,
             max: 100,
-            ticks: { color: "#8b93a7", backdropColor: "transparent" },
-            grid: { color: "#2a3346" },
-            angleLines: { color: "#2a3346" },
-            pointLabels: { color: "#e6e9f0" },
+            ticks: { color: C.axis, backdropColor: "transparent" },
+            grid: { color: C.grid },
+            angleLines: { color: C.grid },
+            pointLabels: { color: "#1b1b24" },
           },
         },
       },
     });
   }
 
-  // ---- Click-to-enlarge charts --------------------------------------------
+  // ---- Click-to-enlarge ----------------------------------------------------
   let modalChart = null;
-
   function openChartModal(canvasId, title) {
     const cfg = chartConfigs[canvasId];
     if (!cfg) return;
-    const clone = structuredClone(cfg); // configs hold only plain data
-    clone.options = Object.assign({}, clone.options, {
-      responsive: true,
-      maintainAspectRatio: false,
-    });
+    const clone = structuredClone(cfg);
+    clone.options = Object.assign({}, clone.options, { responsive: true, maintainAspectRatio: false });
     $("chartModalTitle").textContent = title || "";
     $("chartModal").classList.remove("hidden");
     if (modalChart) modalChart.destroy();
     modalChart = new Chart($("chartModalCanvas"), clone);
   }
-
   function closeChartModal() {
     $("chartModal").classList.add("hidden");
     if (modalChart) {
@@ -665,19 +668,29 @@
       modalChart = null;
     }
   }
+  function wireChartZoom() {
+    document.querySelectorAll(".chart-box").forEach((box) => {
+      box.addEventListener("click", () => {
+        const canvas = box.querySelector("canvas");
+        const title = (box.querySelector("h3") || {}).textContent || "";
+        if (canvas && canvas.id) openChartModal(canvas.id, title.trim());
+      });
+    });
+  }
 
-  // ---- Auth & leaderboard --------------------------------------------------
-  const authState = { user: null, dbAvailable: false };
+  // =========================================================================
+  // Auth
+  // =========================================================================
   let authMode = "login";
 
   async function loadMe() {
     try {
-      const r = await fetch("/api/me");
-      const d = await r.json();
+      const d = await (await fetch("/api/me")).json();
       authState.user = d.user;
       authState.dbAvailable = d.db_available;
     } catch {
       authState.user = null;
+      authState.dbAvailable = false;
     }
     renderAuthbar();
   }
@@ -686,16 +699,15 @@
     const bar = $("authbar");
     if (authState.user) {
       bar.innerHTML =
-        `<span class="who">👤 ${esc(authState.user.username)}</span>` +
-        `<button class="btn small" id="logoutBtn">Log out</button>`;
+        `<span class="hidden sm:inline-flex items-center gap-1 font-label text-sm text-on-surface"><span class="material-symbols-outlined text-[20px] text-primary">account_circle</span>${esc(authState.user.username)}</span>` +
+        `<button id="logoutBtn" class="px-4 py-2 text-label tracking-wide text-primary border border-outline-variant rounded-full hover:bg-surface-container-low transition-colors">Log out</button>`;
       $("logoutBtn").addEventListener("click", logout);
     } else if (!authState.dbAvailable) {
-      // Accounts are optional: hide sign-in entirely until MongoDB is reachable.
       bar.innerHTML = "";
     } else {
       bar.innerHTML =
-        `<button class="btn small" id="openLogin">Log in</button>` +
-        `<button class="btn small primary" id="openRegister">Sign up</button>`;
+        `<button id="openLogin" class="px-4 py-2 text-label tracking-wide text-primary border border-outline-variant rounded-full hover:bg-surface-container-low transition-colors">Login</button>` +
+        `<button id="openRegister" class="px-4 py-2 text-label tracking-wide bg-primary text-on-primary rounded-full hover:bg-primary-container transition-colors shadow-sm">Sign Up</button>`;
       $("openLogin").addEventListener("click", () => openAuth("login"));
       $("openRegister").addEventListener("click", () => openAuth("register"));
     }
@@ -703,48 +715,41 @@
 
   function openAuth(mode) {
     if (!authState.dbAvailable) {
-      alert(
-        "Accounts are unavailable — the server can't reach MongoDB right now.",
-      );
+      alert("Accounts are unavailable — the server can't reach the database right now.");
       return;
     }
     setAuthMode(mode);
-    $("authError").textContent = "";
+    hide("authError");
     $("authForm").reset();
     $("authModal").classList.remove("hidden");
   }
-  function closeAuth() {
-    $("authModal").classList.add("hidden");
-  }
+  const closeAuth = () => $("authModal").classList.add("hidden");
 
   function setAuthMode(mode) {
     authMode = mode;
-    $("tabLogin").classList.toggle("active", mode === "login");
-    $("tabRegister").classList.toggle("active", mode === "register");
-    $("authEmail").style.display = mode === "register" ? "block" : "none";
-    $("authSubmit").textContent =
-      mode === "login" ? "Log in" : "Create account";
+    const on = "text-primary border-primary";
+    const off = "text-on-surface-variant border-transparent";
+    $("tabLogin").className = `flex-1 py-3 text-center font-label tracking-wide border-b-2 ${mode === "login" ? on : off}`;
+    $("tabRegister").className = `flex-1 py-3 text-center font-label tracking-wide border-b-2 ${mode === "register" ? on : off}`;
+    $("authEmailWrap").classList.toggle("hidden", mode !== "register");
+    $("authSubmit").textContent = mode === "login" ? "Log in" : "Create account";
   }
 
   async function submitAuth(e) {
     e.preventDefault();
-    const body = {
-      username: $("authUsername").value.trim(),
-      password: $("authPassword").value,
-    };
+    const body = { username: $("authUsername").value.trim(), password: $("authPassword").value };
     if (authMode === "register") body.email = $("authEmail").value.trim();
     try {
-      const r = await fetch(
-        `/api/${authMode === "login" ? "login" : "register"}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        },
-      );
+      const r = await fetch(`/api/${authMode === "login" ? "login" : "register"}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
       const d = await r.json();
       if (!r.ok || d.error) {
-        $("authError").textContent = d.error || "Failed.";
+        const err = $("authError");
+        err.textContent = d.error || "Failed.";
+        err.classList.remove("hidden");
         return;
       }
       authState.user = d.user;
@@ -752,7 +757,9 @@
       renderAuthbar();
       loadLeaderboard();
     } catch (err) {
-      $("authError").textContent = "Network error: " + err.message;
+      const e2 = $("authError");
+      e2.textContent = "Network error: " + err.message;
+      e2.classList.remove("hidden");
     }
   }
 
@@ -765,81 +772,98 @@
     loadLeaderboard();
   }
 
+  // =========================================================================
+  // Leaderboard (full view + home preview)
+  // =========================================================================
   async function loadLeaderboard() {
-    const card = $("leaderboardCard");
-    const body = $("leaderboardBody");
-    const note = $("leaderboardNote");
+    let d;
     try {
-      const r = await fetch("/api/leaderboard");
-      const d = await r.json();
-      if (d.error) {
-        // No database yet — keep the leaderboard out of the way entirely.
-        card.classList.add("hidden");
-        body.innerHTML = "";
-        return;
-      }
-      card.classList.remove("hidden");
-      const rows = d.leaderboard || [];
-      if (!rows.length) {
-        note.textContent = "No scores yet — be the first to get on the board!";
-        body.innerHTML = "";
-        return;
-      }
-      note.textContent = "Top scores across everyone (each user's best run).";
-      body.innerHTML = rows
+      d = await (await fetch("/api/leaderboard")).json();
+    } catch {
+      d = { error: "network" };
+    }
+    const rows = (d && d.leaderboard) || [];
+    const available = !(d && d.error);
+
+    // Home preview card
+    const homeCard = $("homeLeaderboardCard");
+    if (available && rows.length) {
+      homeCard.classList.remove("hidden");
+      $("homeLeaderboardBody").innerHTML = rows
+        .slice(0, 3)
         .map(
           (row) => `
-        <tr class="${row.is_me ? "me" : ""}">
-          <td>${row.rank}</td>
-          <td>${esc(row.username || "—")}${row.is_me ? " (you)" : ""}</td>
-          <td><b>${row.best_score ?? "—"}</b></td>
-          <td>${row.attempts}</td>
+        <tr class="border-b border-outline-variant/40">
+          <td class="py-2 font-body font-semibold text-primary">${row.rank}</td>
+          <td class="py-2 font-body">${esc(row.username || "—")}</td>
+          <td class="py-2 font-body font-bold text-right" style="color:${scoreColor(row.best_score)}">${row.best_score ?? "—"}</td>
         </tr>`,
         )
         .join("");
-    } catch {
-      card.classList.add("hidden");
+      $("homeLeaderboardNote").textContent = "";
+    } else {
+      homeCard.classList.add("hidden");
     }
+
+    // Full leaderboard view
+    const tableWrap = $("leaderboardTableWrap");
+    const unavail = $("leaderboardUnavailable");
+    if (!available) {
+      tableWrap.classList.add("hidden");
+      unavail.classList.remove("hidden");
+      $("leaderboardNote").textContent = "Sign in (and connect a database) to compete on the global leaderboard.";
+      return;
+    }
+    unavail.classList.add("hidden");
+    tableWrap.classList.remove("hidden");
+    if (!rows.length) {
+      $("leaderboardNote").textContent = "No scores yet — be the first to get on the board!";
+      $("leaderboardBody").innerHTML = "";
+      return;
+    }
+    $("leaderboardNote").textContent = "Top scores across everyone — each user's best run.";
+    $("leaderboardBody").innerHTML = rows
+      .map(
+        (row) => `
+      <tr class="${row.is_me ? "bg-primary-fixed/30 border-l-4 border-primary" : "hover:bg-surface-container-lowest"} transition-colors">
+        <td class="py-4 px-6 font-body font-medium">${row.rank}</td>
+        <td class="py-4 px-6 font-body text-on-surface ${row.is_me ? "font-bold" : ""}">${esc(row.username || "—")}${row.is_me ? " (you)" : ""}</td>
+        <td class="py-4 px-6 text-right font-body font-bold" style="color:${scoreColor(row.best_score)}">${row.best_score ?? "—"}</td>
+        <td class="py-4 px-6 text-right font-body text-on-surface-variant">${row.attempts}</td>
+      </tr>`,
+      )
+      .join("");
   }
 
-  // Pull config (minimum recording length) from the server.
   async function loadConfig() {
     try {
       const d = await (await fetch("/health")).json();
-      if (typeof d.min_recording_sec === "number")
-        minRecordingSec = d.min_recording_sec;
+      if (typeof d.min_recording_sec === "number") minRecordingSec = d.min_recording_sec;
     } catch {
       /* keep default */
     }
   }
 
-  // Click any chart to open an enlarged version.
-  function wireChartZoom() {
-    document.querySelectorAll(".chart-box").forEach((box) => {
-      box.addEventListener("click", () => {
-        const canvas = box.querySelector("canvas");
-        const title = (box.querySelector("h3") || {}).textContent || "";
-        if (canvas && canvas.id) openChartModal(canvas.id, title);
-      });
-    });
-  }
-
-  // wire up modals + initial load
+  // =========================================================================
+  // Wire-up + initial load
+  // =========================================================================
   $("authClose").addEventListener("click", closeAuth);
-  $("authModal").addEventListener("click", (e) => {
-    if (e.target.id === "authModal") closeAuth();
-  });
+  document.querySelectorAll("[data-close-auth]").forEach((el) => el.addEventListener("click", closeAuth));
   $("tabLogin").addEventListener("click", () => setAuthMode("login"));
   $("tabRegister").addEventListener("click", () => setAuthMode("register"));
   $("authForm").addEventListener("submit", submitAuth);
+
   $("chartModalClose").addEventListener("click", closeChartModal);
-  $("chartModal").addEventListener("click", (e) => {
-    if (e.target.id === "chartModal") closeChartModal();
-  });
+  document.querySelectorAll("[data-close-chart]").forEach((el) => el.addEventListener("click", closeChartModal));
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") closeChartModal();
+    if (e.key === "Escape") {
+      closeChartModal();
+      closeAuth();
+    }
   });
+
   wireChartZoom();
+  showView("home");
   loadConfig();
   loadMe();
   loadLeaderboard();
@@ -852,9 +876,9 @@
     $(id).classList.add("hidden");
   }
   function showError(msg) {
-    const e = $("error");
-    e.textContent = msg;
+    $("errorText").textContent = msg;
     show("error");
+    showView("home");
   }
   function setLoadingMsg(msg) {
     const el = $("loadingMsg");
@@ -863,17 +887,14 @@
   function sleep(ms) {
     return new Promise((r) => setTimeout(r, ms));
   }
+  function fmtDuration(sec) {
+    const s = Math.round(sec || 0);
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  }
   function esc(s) {
     return String(s).replace(
       /[&<>"']/g,
-      (c) =>
-        ({
-          "&": "&amp;",
-          "<": "&lt;",
-          ">": "&gt;",
-          '"': "&quot;",
-          "'": "&#39;",
-        })[c],
+      (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c],
     );
   }
 })();
