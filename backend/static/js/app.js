@@ -75,17 +75,29 @@
 
     const form = new FormData();
     form.append("audio", selectedBlob, selectedName);
+    setLoadingMsg("Uploading…");
 
     try {
+      // The server analyzes in the background and returns a job id right away,
+      // so we never hold one long request open (which browsers/proxies drop and
+      // surface as a "network error"). We then poll until it's finished.
       const resp = await fetch("/analyze", { method: "POST", body: form });
       const data = await resp.json();
-      hide("loading");
       if (!resp.ok || data.error) {
+        hide("loading");
         showError(data.error || `Request failed (${resp.status}).`);
+        return;
+      }
+      const result = await pollAnalysis(data.job_id);
+      hide("loading");
+      if (!result) {
+        showError("Analysis timed out. Please try again.");
+      } else if (result.error) {
+        showError(result.error);
       } else {
-        render(data);
+        render(result);
         show("results");
-        handleSaved(data);
+        handleSaved(result);
       }
     } catch (err) {
       hide("loading");
@@ -94,6 +106,36 @@
       analyzeBtn.disabled = false;
     }
   });
+
+  // Poll the lightweight status endpoint until the background analysis finishes.
+  // Each request is short, so a brief network blip just retries instead of
+  // failing the whole analysis. Returns the result, {error}, or null on timeout.
+  async function pollAnalysis(jobId) {
+    const started = Date.now();
+    const MAX_MS = 20 * 60 * 1000;   // generous ceiling for very long talks
+    let consecutiveErrors = 0;
+    while (Date.now() - started < MAX_MS) {
+      await sleep(2000);
+      setLoadingMsg(`Transcribing and analyzing… (${Math.round((Date.now() - started) / 1000)}s)`);
+      let d;
+      try {
+        const r = await fetch(`/analyze/status/${jobId}`);
+        if (r.status === 404) {
+          d = await r.json().catch(() => ({}));
+          return { error: d.error || "Analysis job expired. Please try again." };
+        }
+        d = await r.json();
+        consecutiveErrors = 0;
+      } catch (err) {
+        // Transient — keep polling through short outages.
+        if (++consecutiveErrors > 30) throw err;
+        continue;
+      }
+      if (d.state === "done") return d.result;
+      if (d.state === "error") return { error: d.error };
+    }
+    return null;  // timed out
+  }
 
   // Show whether the result was recorded to the leaderboard, then refresh it.
   function handleSaved(data) {
@@ -646,6 +688,8 @@
   function show(id) { $(id).classList.remove("hidden"); }
   function hide(id) { $(id).classList.add("hidden"); }
   function showError(msg) { const e = $("error"); e.textContent = msg; show("error"); }
+  function setLoadingMsg(msg) { const el = $("loadingMsg"); if (el) el.textContent = msg; }
+  function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
   function esc(s) {
     return String(s).replace(/[&<>"']/g, (c) =>
       ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
