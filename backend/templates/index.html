@@ -1,285 +1,448 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="light">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Pitch Prepper — AI Speaking Coach</title>
+
+    <!-- Tailwind (Play CDN) + project design tokens -->
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <script id="tailwind-config">
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              "background": "#fcf8ff",
+              "surface": "#fcf8ff",
+              "surface-dim": "#dcd8e5",
+              "surface-variant": "#e4e1ee",
+              "surface-container-lowest": "#ffffff",
+              "surface-container-low": "#f5f2ff",
+              "surface-container": "#f0ecf9",
+              "surface-container-high": "#eae6f4",
+              "surface-container-highest": "#e4e1ee",
+              "on-surface": "#1b1b24",
+              "on-surface-variant": "#464555",
+              "on-background": "#1b1b24",
+              "inverse-surface": "#302f39",
+              "inverse-on-surface": "#f3effc",
+              "outline": "#777587",
+              "outline-variant": "#c7c4d8",
+              "primary": "#3525cd",
+              "on-primary": "#ffffff",
+              "primary-container": "#4f46e5",
+              "on-primary-container": "#dad7ff",
+              "primary-fixed": "#e2dfff",
+              "primary-fixed-dim": "#c3c0ff",
+              "on-primary-fixed": "#0f0069",
+              "inverse-primary": "#c3c0ff",
+              "secondary": "#006c49",
+              "on-secondary": "#ffffff",
+              "secondary-container": "#6cf8bb",
+              "on-secondary-container": "#00714d",
+              "tertiary": "#684000",
+              "on-tertiary": "#ffffff",
+              "tertiary-container": "#885500",
+              "on-tertiary-container": "#ffd4a4",
+              "tertiary-fixed": "#ffddb8",
+              "tertiary-fixed-dim": "#ffb95f",
+              "error": "#ba1a1a",
+              "on-error": "#ffffff",
+              "error-container": "#ffdad6",
+              "on-error-container": "#93000a",
+            },
+            borderRadius: { DEFAULT: "0.5rem", md: "0.75rem", lg: "1rem", xl: "1.5rem", full: "9999px" },
+            spacing: {
+              gutter: "1.5rem", "margin-desktop": "2rem", "margin-mobile": "1rem",
+              "container-max": "1280px", "stack-sm": "0.5rem", "stack-md": "1rem", "stack-lg": "2rem",
+            },
+            fontFamily: {
+              headline: ["Geist", "system-ui", "sans-serif"],
+              label: ["Geist", "system-ui", "sans-serif"],
+              metric: ["Geist", "system-ui", "sans-serif"],
+              body: ["Inter", "system-ui", "sans-serif"],
+            },
+            maxWidth: { "container-max": "1280px" },
+          },
+        },
+      };
+    </script>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
+      href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap"
       rel="stylesheet"
-      href="{{ url_for('static', filename='css/style.css') }}"
     />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=swap"
+      rel="stylesheet"
+    />
+
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
   </head>
-  <body>
-    <header class="hero">
-      <div class="authbar" id="authbar">
-        <!-- populated by app.js: shows Login/Register or the current user + Logout -->
+
+  <body class="bg-background text-on-surface font-body antialiased min-h-screen flex flex-col">
+    <!-- ===================== Top app bar ===================== -->
+    <header class="bg-surface/90 backdrop-blur shadow-sm sticky top-0 z-40 w-full border-b border-outline-variant">
+      <div class="flex justify-between items-center w-full px-margin-mobile md:px-margin-desktop max-w-container-max mx-auto h-16">
+        <div class="flex items-center gap-4 md:gap-8">
+          <button data-view="home" class="nav-logo flex items-center gap-2 font-headline font-bold text-xl text-primary">
+            <span class="material-symbols-outlined" style="font-variation-settings:'FILL' 1">graphic_eq</span>
+            Pitch Prepper
+          </button>
+          <nav class="hidden sm:flex items-center gap-4 md:gap-6">
+            <button data-view="home" class="nav-link text-label tracking-wide text-on-surface-variant hover:text-primary transition-colors">Home</button>
+            <button data-view="results" class="nav-link text-label tracking-wide text-on-surface-variant hover:text-primary transition-colors">Results</button>
+            <button data-view="leaderboard" id="navLeaderboard" class="nav-link text-label tracking-wide text-on-surface-variant hover:text-primary transition-colors">Leaderboard</button>
+          </nav>
+        </div>
+        <!-- Auth area (populated by app.js) -->
+        <div id="authbar" class="flex items-center gap-2"></div>
       </div>
-      <h1>🎤 Pitch Prepper</h1>
-      <p>
-        Upload or record your talk and get coaching on delivery, language, and
-        content.
-      </p>
     </header>
 
-    <!-- Auth modal (login / register) -->
-    <div id="authModal" class="modal hidden">
-      <div class="modal-card">
-        <button class="modal-close" id="authClose">×</button>
-        <div class="tabs">
-          <button class="tab active" id="tabLogin" data-mode="login">
-            Log in
-          </button>
-          <button class="tab" id="tabRegister" data-mode="register">
-            Sign up
-          </button>
-        </div>
-        <form id="authForm">
-          <input
-            type="text"
-            id="authUsername"
-            placeholder="Username"
-            autocomplete="username"
-          />
-          <input
-            type="email"
-            id="authEmail"
-            placeholder="Email (optional)"
-            autocomplete="email"
-          />
-          <input
-            type="password"
-            id="authPassword"
-            placeholder="Password (min 6 chars)"
-            autocomplete="current-password"
-          />
-          <p id="authError" class="auth-error"></p>
-          <button type="submit" class="btn primary" id="authSubmit">
-            Log in
-          </button>
-        </form>
-        <p class="muted small">
-          Sign in to save your scores to the global leaderboard.
-        </p>
-      </div>
-    </div>
-
-    <main>
-      <!-- Input panel -->
-      <section class="card input-card">
-        <div class="input-row">
-          <div class="input-block">
-            <h3>Upload audio</h3>
-            <input
-              type="file"
-              id="fileInput"
-              accept="audio/*,video/mp4,.webm"
-            />
-          </div>
-          <div class="divider">or</div>
-          <div class="input-block">
-            <h3>Record</h3>
-            <button id="recordBtn" class="btn">● Start recording</button>
-            <span id="recordStatus" class="muted"></span>
-          </div>
-        </div>
-        <button id="analyzeBtn" class="btn primary" disabled>
-          Analyze presentation
-        </button>
-        <p id="selected" class="muted"></p>
-      </section>
-
-      <!-- Loading -->
-      <section id="loading" class="card hidden">
-        <div class="spinner"></div>
-        <p id="loadingMsg">
-          Transcribing and analyzing… this can take a minute for longer audio.
-        </p>
-      </section>
-
-      <!-- Error -->
-      <section id="error" class="card error hidden"></section>
-
-      <!-- Results -->
-      <section id="results" class="hidden">
-        <p id="savedNote" class="saved-note hidden"></p>
-        <!-- Score summary -->
-        <div class="card">
-          <div class="score-grid">
-            <div class="score-hero">
-              <div class="score-circle" id="overallScore">–</div>
-              <div class="score-label">Overall Score</div>
-            </div>
-            <div class="score-breakdown">
-              <div class="score-item">
-                <span>Delivery</span>
-                <div class="bar"><div id="barDelivery"></div></div>
-                <b id="scoreDelivery">–</b>
-              </div>
-              <div class="score-item">
-                <span>Language</span>
-                <div class="bar"><div id="barLanguage"></div></div>
-                <b id="scoreLanguage">–</b>
-              </div>
-              <div class="score-item">
-                <span>Content</span>
-                <div class="bar"><div id="barContent"></div></div>
-                <b id="scoreContent">–</b>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Key metrics -->
-        <div class="card">
-          <h2>Key Metrics</h2>
-          <div class="metrics" id="metrics"></div>
-        </div>
-
-        <!-- Top recommendations -->
-        <div class="card">
-          <h2>Top 3 Recommendations</h2>
-          <ol id="topRecs" class="recs"></ol>
-          <div class="two-col">
-            <div>
-              <h3 class="good">✓ Strengths</h3>
-              <ul id="strengths"></ul>
-            </div>
-            <div>
-              <h3 class="bad">△ Areas to improve</h3>
-              <ul id="improvements"></ul>
-            </div>
-          </div>
-        </div>
-
-        <!-- Ideal delivery (ElevenLabs TTS) — revealed only when configured -->
-        <div class="card hidden" id="idealCard">
-          <h2>🔊 Hear how it could sound</h2>
-          <p class="muted">
-            An AI-polished take on <em>your</em> talk — fillers trimmed,
-            phrasing tightened — read back in a clear, well-paced voice.
-            Generated only when you ask, and sends your transcript text to
-            ElevenLabs.
+    <main class="flex-grow w-full max-w-container-max mx-auto px-margin-mobile md:px-margin-desktop py-stack-lg">
+      <!-- ===================== HOME VIEW ===================== -->
+      <section id="view-home" class="view">
+        <div class="text-center max-w-2xl mx-auto mb-stack-lg">
+          <h1 class="font-headline font-semibold text-3xl md:text-5xl text-primary tracking-tight">Master Your Delivery</h1>
+          <p class="font-body text-on-surface-variant mt-3 text-base md:text-lg">
+            Upload or record your presentation to get instant, AI-driven feedback on your speaking performance.
           </p>
-          <p class="muted small">
-            💡 <b>Click sentences below</b> to improve just that part of your
-            talk — or leave them unselected to redo the whole thing. (Improving
-            a shorter part is faster.)
-          </p>
-          <div id="idealPicker" class="ideal-picker"></div>
-          <div class="ideal-controls">
-            <span id="idealSelInfo" class="muted small"
-              >Improving: whole talk</span
-            >
-            <button type="button" class="linkbtn hidden" id="idealClear">
-              Clear selection
+        </div>
+
+        <!-- Error banner -->
+        <div id="error" class="hidden mb-stack-md p-4 rounded-lg bg-error-container border border-error/30 flex items-start gap-3">
+          <span class="material-symbols-outlined text-error" style="font-variation-settings:'FILL' 1">error</span>
+          <p id="errorText" class="font-body text-sm text-on-error-container"></p>
+        </div>
+
+        <!-- Input grid -->
+        <div id="inputArea" class="grid grid-cols-1 lg:grid-cols-3 gap-gutter">
+          <!-- Upload card -->
+          <div class="bg-surface-container-lowest rounded-xl border-2 border-dashed border-outline-variant p-stack-lg flex flex-col items-center justify-center text-center">
+            <span class="material-symbols-outlined text-4xl text-primary mb-2">upload_file</span>
+            <h3 class="font-headline font-semibold text-xl text-on-surface">Upload Audio</h3>
+            <p class="font-body text-sm text-on-surface-variant mt-1" id="uploadHint">Supports WAV, MP3, M4A, MP4, OGG, FLAC, WEBM…</p>
+            <label class="mt-4 inline-flex cursor-pointer px-5 py-2 rounded-lg bg-surface-container-low text-primary border border-outline-variant text-label tracking-wide hover:bg-surface-container transition-colors">
+              Select File
+              <input type="file" id="fileInput" class="hidden" accept="audio/*,video/mp4,.webm,.m4a,.aac,.opus,.flac,.ogg" />
+            </label>
+          </div>
+
+          <!-- Record card -->
+          <div class="bg-surface-container-lowest rounded-xl border border-outline-variant p-stack-lg flex flex-col items-center justify-center text-center shadow-sm">
+            <span class="material-symbols-outlined text-4xl text-error mb-2" style="font-variation-settings:'FILL' 1">mic</span>
+            <h3 class="font-headline font-semibold text-xl text-on-surface">Record Audio</h3>
+            <p class="font-body text-sm text-on-surface-variant mt-1" id="recordStatus">Ready to record</p>
+            <button id="recordBtn" class="mt-4 inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-error text-on-error text-label tracking-wide hover:opacity-90 transition-opacity shadow-sm">
+              <span class="material-symbols-outlined text-base" style="font-variation-settings:'FILL' 1">radio_button_checked</span>
+              <span id="recordBtnLabel">Start Recording</span>
             </button>
           </div>
-          <button class="btn primary ideal-btn" id="idealBtn">
-            ▶ Generate ideal delivery
+
+          <!-- Mini leaderboard preview -->
+          <div id="homeLeaderboardCard" class="hidden lg:row-span-2 bg-surface-container-lowest rounded-xl border border-outline-variant p-stack-lg shadow-sm">
+            <div class="flex items-center gap-2 mb-4">
+              <span class="material-symbols-outlined text-primary">leaderboard</span>
+              <h3 class="font-headline font-semibold text-xl text-on-surface">Leaderboard</h3>
+            </div>
+            <table class="w-full text-left">
+              <thead>
+                <tr class="text-label tracking-wide text-on-surface-variant uppercase border-b border-outline-variant">
+                  <th class="py-2 font-label font-medium">Rank</th>
+                  <th class="py-2 font-label font-medium">User</th>
+                  <th class="py-2 font-label font-medium text-right">Score</th>
+                </tr>
+              </thead>
+              <tbody id="homeLeaderboardBody"></tbody>
+            </table>
+            <p id="homeLeaderboardNote" class="font-body text-xs text-on-surface-variant mt-3"></p>
+          </div>
+
+          <!-- Analyze button -->
+          <button id="analyzeBtn" disabled
+            class="lg:col-span-2 w-full py-4 rounded-xl bg-primary text-on-primary font-headline font-semibold text-lg shadow-sm hover:bg-primary-container transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+            Analyze Presentation
           </button>
-          <span id="idealStatus" class="muted"></span>
-          <div id="idealOutput" class="hidden">
-            <audio id="idealAudio" controls></audio>
-            <details class="ideal-script">
-              <summary>Show the improved script</summary>
-              <p id="idealScript" class="transcript"></p>
-            </details>
-          </div>
+          <p id="selected" class="lg:col-span-2 font-body text-sm text-on-surface-variant text-center"></p>
         </div>
 
-        <!-- Charts -->
-        <div class="card">
-          <h2>
-            Visualizations
-            <span class="muted" style="font-weight: 400; font-size: 0.6em"
-              >(click any chart to enlarge)</span
-            >
-          </h2>
-          <div class="charts">
-            <div class="chart-box">
-              <h3>Speaking rate (WPM)</h3>
-              <canvas id="wpmChart"></canvas>
-            </div>
-            <div class="chart-box">
-              <h3>Pitch (Hz)</h3>
-              <canvas id="pitchChart"></canvas>
-            </div>
-            <div class="chart-box">
-              <h3>Volume (dB)</h3>
-              <canvas id="volumeChart"></canvas>
-            </div>
-            <div class="chart-box">
-              <h3>Pause timeline</h3>
-              <canvas id="pauseChart"></canvas>
-            </div>
-            <div class="chart-box">
-              <h3>Filler words</h3>
-              <canvas id="fillerChart"></canvas>
-            </div>
-            <div class="chart-box">
-              <h3>Content scores</h3>
-              <canvas id="contentChart"></canvas>
-            </div>
-          </div>
+        <!-- Loading state -->
+        <div id="loading" class="hidden bg-surface-container-lowest rounded-xl border border-outline-variant p-stack-lg flex flex-col items-center justify-center text-center shadow-sm">
+          <div class="spinner mb-4"></div>
+          <h3 class="font-headline font-semibold text-xl text-on-surface">Analyzing your presentation</h3>
+          <p id="loadingMsg" class="font-body text-sm text-on-surface-variant mt-2">
+            Transcribing and analyzing… this can take a minute for longer audio (the first run loads models).
+          </p>
         </div>
-
-        <!-- Content feedback -->
-        <div class="card">
-          <h2>Content &amp; Structure</h2>
-          <p id="contentSummary" class="muted"></p>
-          <div id="contentCats" class="content-cats"></div>
-        </div>
-
-        <!-- Language details -->
-        <div class="card">
-          <h2>Language Details</h2>
-          <div id="languageDetails" class="two-col"></div>
-        </div>
-
-        <!-- Transcript -->
-        <div class="card">
-          <h2>Transcript</h2>
-          <p id="transcript" class="transcript"></p>
-        </div>
-
-        <p id="warnings" class="muted"></p>
       </section>
 
-      <!-- Leaderboard (revealed by app.js only when MongoDB is reachable) -->
-      <section class="card hidden" id="leaderboardCard">
-        <h2>🏆 Leaderboard</h2>
-        <p class="muted small" id="leaderboardNote">
-          Top scores across everyone. Sign in to get on the board.
-        </p>
-        <table class="leaderboard" id="leaderboardTable">
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>User</th>
-              <th>Best score</th>
-              <th>Attempts</th>
-            </tr>
-          </thead>
-          <tbody id="leaderboardBody"></tbody>
-        </table>
+      <!-- ===================== RESULTS VIEW ===================== -->
+      <section id="view-results" class="view hidden">
+        <!-- Empty state (before any analysis) -->
+        <div id="resultsEmpty" class="text-center py-stack-lg">
+          <span class="material-symbols-outlined text-5xl text-outline-variant">analytics</span>
+          <h2 class="font-headline font-semibold text-2xl text-on-surface mt-3">No results yet</h2>
+          <p class="font-body text-on-surface-variant mt-2">Run an analysis from the Home tab to see your scored dashboard here.</p>
+          <button data-view="home" class="nav-link mt-4 inline-flex px-5 py-2.5 rounded-full bg-primary text-on-primary text-label tracking-wide hover:bg-primary-container transition-colors">Go to Home</button>
+        </div>
+
+        <!-- Results content -->
+        <div id="resultsContent" class="hidden">
+          <!-- Page header -->
+          <div class="mb-stack-md flex flex-col md:flex-row md:items-end justify-between gap-4">
+            <div>
+              <h1 class="font-headline font-semibold text-2xl md:text-3xl text-on-surface tracking-tight">Pitch Analysis Results</h1>
+              <p class="font-body text-sm text-on-surface-variant mt-1" id="resultsSubtitle"></p>
+            </div>
+            <div class="flex flex-wrap gap-2" id="resultsMetaChips"></div>
+          </div>
+
+          <p id="savedNote" class="hidden mb-stack-md p-3 rounded-lg bg-primary-fixed/40 border border-primary/20 font-body text-sm text-on-primary-fixed"></p>
+
+          <!-- Sub-nav anchors -->
+          <nav class="flex gap-2 overflow-x-auto hide-scrollbar mb-stack-md">
+            <a href="#sec-overview" class="subnav-link shrink-0 px-4 py-2 rounded-lg bg-primary-container text-on-primary-container text-label tracking-wide">Overview</a>
+            <a href="#sec-charts" class="subnav-link shrink-0 px-4 py-2 rounded-lg text-on-surface-variant hover:bg-surface-container-low text-label tracking-wide">Charts</a>
+            <a href="#sec-content" class="subnav-link shrink-0 px-4 py-2 rounded-lg text-on-surface-variant hover:bg-surface-container-low text-label tracking-wide">Content</a>
+            <a href="#sec-language" class="subnav-link shrink-0 px-4 py-2 rounded-lg text-on-surface-variant hover:bg-surface-container-low text-label tracking-wide">Language</a>
+            <a href="#sec-transcript" class="subnav-link shrink-0 px-4 py-2 rounded-lg text-on-surface-variant hover:bg-surface-container-low text-label tracking-wide">Transcript</a>
+          </nav>
+
+          <!-- Overview -->
+          <div id="sec-overview" class="grid grid-cols-1 lg:grid-cols-3 gap-gutter scroll-mt-24">
+            <!-- Overall score -->
+            <div class="bg-surface-container-lowest rounded-xl border border-outline-variant shadow-sm p-stack-lg flex flex-col items-center justify-center relative overflow-hidden">
+              <div class="absolute -top-10 -right-10 w-32 h-32 bg-primary-fixed-dim opacity-20 rounded-full blur-2xl"></div>
+              <h2 class="font-label tracking-widest text-on-surface-variant uppercase text-xs mb-4">Overall Score</h2>
+              <div class="relative w-44 h-44 flex items-center justify-center mb-3">
+                <svg class="w-full h-full -rotate-90" viewBox="0 0 100 100">
+                  <circle cx="50" cy="50" r="45" fill="none" stroke="#e4e1ee" stroke-width="6"></circle>
+                  <circle id="gaugeArc" cx="50" cy="50" r="45" fill="none" stroke="#3525cd" stroke-width="6"
+                    stroke-linecap="round" stroke-dasharray="282.74" stroke-dashoffset="282.74"
+                    class="transition-all duration-1000 ease-out"></circle>
+                </svg>
+                <div class="absolute inset-0 flex flex-col items-center justify-center">
+                  <span id="overallScore" class="font-metric font-bold text-5xl text-on-surface">–</span>
+                  <span id="overallLabel" class="font-label tracking-wide text-sm mt-1"></span>
+                </div>
+              </div>
+              <p id="overallSummary" class="font-body text-sm text-on-surface-variant text-center"></p>
+            </div>
+
+            <!-- Sub-scores -->
+            <div class="lg:col-span-2 bg-surface-container-lowest rounded-xl border border-outline-variant shadow-sm p-stack-lg flex flex-col justify-center">
+              <h2 class="font-label tracking-widest text-on-surface-variant uppercase text-xs mb-stack-md">Performance Metrics</h2>
+              <div class="space-y-stack-md" id="subScores"></div>
+            </div>
+          </div>
+
+          <!-- Key metrics -->
+          <div class="mt-stack-md">
+            <h2 class="font-headline font-semibold text-xl text-on-surface mb-stack-sm">Key Metrics</h2>
+            <div id="metrics" class="grid grid-cols-2 sm:grid-cols-4 gap-gutter"></div>
+          </div>
+
+          <!-- Recommendations -->
+          <div class="mt-stack-md bg-surface-container-lowest rounded-xl border border-outline-variant shadow-sm p-stack-lg">
+            <div class="flex items-center gap-2 mb-stack-md">
+              <span class="material-symbols-outlined text-tertiary" style="font-variation-settings:'FILL' 1">lightbulb</span>
+              <h2 class="font-headline font-semibold text-xl text-on-surface">Top 3 Recommendations</h2>
+            </div>
+            <div id="topRecs" class="grid grid-cols-1 md:grid-cols-3 gap-gutter"></div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-gutter mt-stack-lg">
+              <div>
+                <h3 class="font-headline font-semibold text-base text-secondary flex items-center gap-1 mb-2">
+                  <span class="material-symbols-outlined text-lg">check_circle</span> Strengths
+                </h3>
+                <ul id="strengths" class="space-y-2"></ul>
+              </div>
+              <div>
+                <h3 class="font-headline font-semibold text-base text-tertiary flex items-center gap-1 mb-2">
+                  <span class="material-symbols-outlined text-lg">trending_up</span> Areas to improve
+                </h3>
+                <ul id="improvements" class="space-y-2"></ul>
+              </div>
+            </div>
+          </div>
+
+          <!-- Ideal delivery -->
+          <div id="idealCard" class="hidden mt-stack-md bg-surface-container-lowest rounded-xl border border-outline-variant shadow-sm p-stack-lg">
+            <div class="flex items-center gap-2 mb-2">
+              <span class="material-symbols-outlined text-primary">graphic_eq</span>
+              <h2 class="font-headline font-semibold text-xl text-on-surface">Hear how it could sound</h2>
+            </div>
+            <p class="font-body text-sm text-on-surface-variant">
+              An AI-polished take on <em>your</em> talk — fillers trimmed, phrasing tightened — read back in a clear voice.
+              Generated only when you ask, and sends your transcript text to ElevenLabs.
+            </p>
+            <p class="font-body text-xs text-on-surface-variant mt-2">
+              💡 <b>Click sentences below</b> to improve just that part — or leave them unselected to redo the whole thing (a shorter part is faster).
+            </p>
+            <div id="idealPicker" class="ideal-picker mt-3 p-3 rounded-lg bg-surface-container-low border border-outline-variant max-h-48 overflow-y-auto font-body text-sm leading-relaxed"></div>
+            <div class="flex items-center justify-between mt-3 flex-wrap gap-2">
+              <span id="idealSelInfo" class="font-body text-xs text-on-surface-variant">Improving: whole talk</span>
+              <button id="idealClear" class="hidden font-label text-xs text-primary hover:underline">Clear selection</button>
+            </div>
+            <button id="idealBtn" class="mt-3 inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-primary text-on-primary text-label tracking-wide hover:bg-primary-container transition-colors shadow-sm">
+              <span class="material-symbols-outlined text-base">play_arrow</span>
+              <span id="idealBtnLabel">Generate ideal delivery</span>
+            </button>
+            <span id="idealStatus" class="font-body text-xs text-on-surface-variant ml-2"></span>
+            <div id="idealOutput" class="hidden mt-4">
+              <audio id="idealAudio" controls class="w-full"></audio>
+              <details class="mt-3">
+                <summary class="font-label text-sm text-primary cursor-pointer">Show the improved script</summary>
+                <p id="idealScript" class="transcript mt-2 font-body text-sm text-on-surface-variant"></p>
+              </details>
+            </div>
+          </div>
+
+          <!-- Charts -->
+          <div id="sec-charts" class="mt-stack-md scroll-mt-24">
+            <h2 class="font-headline font-semibold text-xl text-on-surface mb-stack-sm">
+              Detailed Analytics
+              <span class="font-body font-normal text-xs text-on-surface-variant">(click any chart to enlarge)</span>
+            </h2>
+            <div class="grid grid-cols-1 md:grid-cols-12 gap-gutter">
+              <div class="chart-box md:col-span-8 bg-surface-container-lowest rounded-xl border border-outline-variant shadow-sm p-6 cursor-pointer">
+                <h3 class="font-headline font-semibold text-base text-on-surface flex items-center gap-2 mb-3"><span class="material-symbols-outlined text-primary">speed</span> Speaking rate (WPM)</h3>
+                <div class="chart-wrap"><canvas id="wpmChart"></canvas></div>
+              </div>
+              <div class="chart-box md:col-span-4 bg-surface-container-lowest rounded-xl border border-outline-variant shadow-sm p-6 cursor-pointer">
+                <h3 class="font-headline font-semibold text-base text-on-surface flex items-center gap-2 mb-3"><span class="material-symbols-outlined text-secondary">graphic_eq</span> Pitch (Hz)</h3>
+                <div class="chart-wrap"><canvas id="pitchChart"></canvas></div>
+              </div>
+              <div class="chart-box md:col-span-4 bg-surface-container-lowest rounded-xl border border-outline-variant shadow-sm p-6 cursor-pointer">
+                <h3 class="font-headline font-semibold text-base text-on-surface flex items-center gap-2 mb-3"><span class="material-symbols-outlined text-error">record_voice_over</span> Filler words</h3>
+                <div class="chart-wrap"><canvas id="fillerChart"></canvas></div>
+              </div>
+              <div class="chart-box md:col-span-8 bg-surface-container-lowest rounded-xl border border-outline-variant shadow-sm p-6 cursor-pointer">
+                <h3 class="font-headline font-semibold text-base text-on-surface flex items-center gap-2 mb-3"><span class="material-symbols-outlined text-primary-container">pause_circle</span> Pause timeline</h3>
+                <div class="chart-wrap"><canvas id="pauseChart"></canvas></div>
+              </div>
+              <div class="chart-box md:col-span-6 bg-surface-container-lowest rounded-xl border border-outline-variant shadow-sm p-6 cursor-pointer">
+                <h3 class="font-headline font-semibold text-base text-on-surface flex items-center gap-2 mb-3"><span class="material-symbols-outlined text-primary">volume_up</span> Volume (dB)</h3>
+                <div class="chart-wrap"><canvas id="volumeChart"></canvas></div>
+              </div>
+              <div class="chart-box md:col-span-6 bg-surface-container-lowest rounded-xl border border-outline-variant shadow-sm p-6 cursor-pointer">
+                <h3 class="font-headline font-semibold text-base text-on-surface flex items-center gap-2 mb-3"><span class="material-symbols-outlined text-tertiary">analytics</span> Content scores</h3>
+                <div class="chart-wrap"><canvas id="contentChart"></canvas></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Content & structure -->
+          <div id="sec-content" class="mt-stack-md bg-surface-container-lowest rounded-xl border border-outline-variant shadow-sm p-stack-lg scroll-mt-24">
+            <h2 class="font-headline font-semibold text-xl text-on-surface mb-2">Content &amp; Structure</h2>
+            <p id="contentSummary" class="font-body text-sm text-on-surface-variant mb-stack-md"></p>
+            <div id="contentCats" class="grid grid-cols-1 md:grid-cols-2 gap-gutter"></div>
+          </div>
+
+          <!-- Language details -->
+          <div id="sec-language" class="mt-stack-md bg-surface-container-lowest rounded-xl border border-outline-variant shadow-sm p-stack-lg scroll-mt-24">
+            <h2 class="font-headline font-semibold text-xl text-on-surface mb-stack-md">Language Details</h2>
+            <div id="languageDetails" class="grid grid-cols-1 md:grid-cols-2 gap-gutter"></div>
+          </div>
+
+          <!-- Transcript -->
+          <div id="sec-transcript" class="mt-stack-md bg-surface-container-lowest rounded-xl border border-outline-variant shadow-sm p-stack-lg scroll-mt-24">
+            <h2 class="font-headline font-semibold text-xl text-on-surface mb-2">Transcript</h2>
+            <p id="transcript" class="transcript font-body text-sm text-on-surface-variant"></p>
+          </div>
+
+          <p id="warnings" class="mt-stack-md font-body text-xs text-on-surface-variant"></p>
+        </div>
+      </section>
+
+      <!-- ===================== LEADERBOARD VIEW ===================== -->
+      <section id="view-leaderboard" class="view hidden">
+        <div class="mb-stack-lg">
+          <h1 class="font-headline font-semibold text-2xl md:text-3xl text-on-surface tracking-tight">Global Leaderboard</h1>
+          <p id="leaderboardNote" class="font-body text-on-surface-variant mt-1">Top scores across everyone — each user's best run.</p>
+        </div>
+        <div id="leaderboardUnavailable" class="hidden text-center py-stack-lg">
+          <span class="material-symbols-outlined text-5xl text-outline-variant">cloud_off</span>
+          <p class="font-body text-on-surface-variant mt-3">The leaderboard is unavailable — the server can't reach the database right now.</p>
+        </div>
+        <div id="leaderboardTableWrap" class="bg-surface-container-lowest rounded-xl border border-outline-variant shadow-sm overflow-hidden">
+          <div class="overflow-x-auto">
+            <table class="w-full text-left">
+              <thead class="bg-surface-container-low border-b border-outline-variant">
+                <tr>
+                  <th class="py-4 px-6 font-label tracking-wide text-on-surface-variant uppercase text-xs w-16">Rank</th>
+                  <th class="py-4 px-6 font-label tracking-wide text-on-surface-variant uppercase text-xs">User</th>
+                  <th class="py-4 px-6 font-label tracking-wide text-on-surface-variant uppercase text-xs text-right">Best Score</th>
+                  <th class="py-4 px-6 font-label tracking-wide text-on-surface-variant uppercase text-xs text-right">Attempts</th>
+                </tr>
+              </thead>
+              <tbody id="leaderboardBody" class="divide-y divide-outline-variant"></tbody>
+            </table>
+          </div>
+        </div>
       </section>
     </main>
 
-    <footer>
-      <p class="muted">
-        Pitch Prepper · Flask · Whisper · Librosa · MongoDB · Chart.js
-      </p>
+    <!-- ===================== Footer ===================== -->
+    <footer class="bg-surface-container-low border-t border-outline-variant mt-auto">
+      <div class="flex flex-col md:flex-row justify-between items-center w-full px-margin-mobile md:px-margin-desktop py-stack-lg max-w-container-max mx-auto gap-2">
+        <span class="font-label font-bold text-primary">Pitch Prepper</span>
+        <p class="font-body text-xs text-on-surface-variant">Flask · Whisper · Librosa · Ollama · MongoDB · Chart.js · processed locally on your machine</p>
+      </div>
     </footer>
 
-    <!-- Enlarged-chart modal -->
-    <div id="chartModal" class="modal hidden">
-      <div class="modal-card chart-modal-card">
-        <button class="modal-close" id="chartModalClose">×</button>
-        <h3 id="chartModalTitle" style="margin-top: 0"></h3>
-        <div class="chart-modal-body">
-          <canvas id="chartModalCanvas"></canvas>
+    <!-- ===================== Auth modal ===================== -->
+    <div id="authModal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div class="absolute inset-0 bg-inverse-surface/40 backdrop-blur-sm" data-close-auth></div>
+      <div class="relative w-full max-w-md bg-surface rounded-xl shadow-xl border border-outline-variant overflow-hidden">
+        <button id="authClose" aria-label="Close" class="absolute top-4 right-4 text-on-surface-variant hover:text-on-surface p-1 rounded-full hover:bg-surface-variant">
+          <span class="material-symbols-outlined">close</span>
+        </button>
+        <div class="pt-8 px-8 pb-4 text-center">
+          <div class="w-12 h-12 bg-primary-container text-on-primary-container rounded-lg mx-auto flex items-center justify-center mb-3">
+            <span class="material-symbols-outlined" style="font-variation-settings:'FILL' 1">graphic_eq</span>
+          </div>
+          <h2 class="font-headline font-semibold text-xl text-primary">Pitch Prepper</h2>
+          <p class="font-body text-sm text-on-surface-variant">Sign in to save your scores to the global leaderboard.</p>
         </div>
+        <div class="flex border-b border-outline-variant px-8 mb-5">
+          <button id="tabLogin" data-mode="login" class="flex-1 py-3 text-center font-label tracking-wide text-primary border-b-2 border-primary">Log in</button>
+          <button id="tabRegister" data-mode="register" class="flex-1 py-3 text-center font-label tracking-wide text-on-surface-variant border-b-2 border-transparent hover:text-primary">Sign up</button>
+        </div>
+        <div id="authError" class="hidden mx-8 mb-4 p-3 rounded-lg bg-error-container border border-error/20 font-body text-sm text-on-error-container"></div>
+        <form id="authForm" class="px-8 pb-8 space-y-4">
+          <div class="space-y-1">
+            <label class="font-label tracking-wide text-sm text-on-surface" for="authUsername">Username</label>
+            <input id="authUsername" type="text" autocomplete="username" placeholder="Your username"
+              class="w-full px-3 py-2 bg-surface-container-lowest border border-outline-variant rounded-lg font-body text-sm focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary" />
+          </div>
+          <div id="authEmailWrap" class="space-y-1 hidden">
+            <label class="font-label tracking-wide text-sm text-on-surface" for="authEmail">Email <span class="text-outline font-normal">(optional)</span></label>
+            <input id="authEmail" type="email" autocomplete="email" placeholder="name@company.com"
+              class="w-full px-3 py-2 bg-surface-container-lowest border border-outline-variant rounded-lg font-body text-sm focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary" />
+          </div>
+          <div class="space-y-1">
+            <label class="font-label tracking-wide text-sm text-on-surface" for="authPassword">Password <span class="text-outline font-normal">(min 6 chars)</span></label>
+            <input id="authPassword" type="password" autocomplete="current-password" placeholder="••••••••"
+              class="w-full px-3 py-2 bg-surface-container-lowest border border-outline-variant rounded-lg font-body text-sm focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary" />
+          </div>
+          <button id="authSubmit" type="submit" class="w-full py-2.5 bg-primary text-on-primary font-label tracking-wide rounded-lg hover:bg-primary-container transition-colors">Log in</button>
+        </form>
+      </div>
+    </div>
+
+    <!-- ===================== Chart enlarge modal ===================== -->
+    <div id="chartModal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div class="absolute inset-0 bg-inverse-surface/40 backdrop-blur-sm" data-close-chart></div>
+      <div class="relative w-full max-w-4xl bg-surface rounded-xl shadow-xl border border-outline-variant p-6">
+        <button id="chartModalClose" aria-label="Close" class="absolute top-4 right-4 text-on-surface-variant hover:text-on-surface p-1 rounded-full hover:bg-surface-variant">
+          <span class="material-symbols-outlined">close</span>
+        </button>
+        <h3 id="chartModalTitle" class="font-headline font-semibold text-lg text-on-surface mb-4"></h3>
+        <div class="w-full h-[60vh]"><canvas id="chartModalCanvas"></canvas></div>
       </div>
     </div>
 
