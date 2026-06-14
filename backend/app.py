@@ -40,20 +40,24 @@ from collections import Counter
 
 from flask import Flask, request, jsonify, render_template, session
 
+# Load config from a local .env file (backend/.env) if present, so MONGO_URI /
+# SECRET_KEY / API keys work no matter how the app is launched (Git Bash, an IDE
+# "Run" button, double-click). Pointed at the file next to this module so it
+# loads regardless of cwd. override=True makes the .env authoritative: a stale
+# shell `export` (e.g. an old MONGO_URI left in a terminal) can't silently shadow
+# it. Optional: if python-dotenv isn't installed, real env vars are still used.
+try:
+    from dotenv import load_dotenv
+    load_dotenv(
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"),
+        override=True,
+    )
+except ImportError:
+    pass
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-
-# Load environment variables from a local .env file (e.g. MONGO_URI, SECRET_KEY)
-# if one exists next to this file. This makes config work the same whether the
-# app is launched from a shell `export`, an IDE "Run" button, or a double-click —
-# all of which otherwise see different environments. Optional: if python-dotenv
-# isn't installed, real environment variables are still used.
-try:
-    from dotenv import load_dotenv
-    load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
-except ImportError:
-    pass
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 200 * 1024 * 1024  # 200 MB upload cap
