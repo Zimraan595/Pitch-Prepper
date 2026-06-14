@@ -112,6 +112,11 @@ FFMPEG_MISSING_MSG = (
     "NEW terminal so it picks up the updated PATH."
 )
 
+# Minimum amount of audio we're willing to analyze. Anything shorter is rejected
+# so users can't game the tool with a 2-second "Hi I'm X" clip. Override with
+# MIN_RECORDING_SEC.
+MIN_DURATION_SEC = float(os.environ.get("MIN_RECORDING_SEC", "15"))
+
 # --- Speaking-rate reference (words per minute) ----------------------------
 WPM_IDEAL_LOW = 120
 WPM_IDEAL_HIGH = 150
@@ -452,6 +457,23 @@ def load_audio(audio_path: str):
         return None, None, None
 
 
+def probe_duration(audio_path: str):
+    """Best-effort media duration in seconds, or None if it can't be determined.
+
+    Used to reject too-short clips up front (before the expensive transcription).
+    """
+    try:
+        import soundfile as sf
+        return float(sf.info(audio_path).duration)
+    except Exception:
+        pass
+    try:
+        import librosa
+        return float(librosa.get_duration(path=audio_path))
+    except Exception:
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Module 2a — Speaking rate (WPM)
 # ---------------------------------------------------------------------------
@@ -572,9 +594,16 @@ def analyze_volume(y, sr, np) -> dict:
     except Exception as exc:
         return {"available": False, "reason": f"Volume analysis failed: {exc}"}
 
-    db = librosa.amplitude_to_db(rms, ref=np.max)  # 0 dB = loudest frame
-    # Consider only frames with actual speech energy.
-    speech = db[db > -45]
+    # Positive dB scale referenced to a fixed quiet floor (~ -100 dBFS), so the
+    # numbers read like a sound-level meter (e.g. 40-90) instead of the negative
+    # "dB below loudest" scale. Clamp at 0 so it can never go negative.
+    REF = 1e-5
+    db = 20.0 * np.log10(np.maximum(rms, 1e-10) / REF)
+    db = np.maximum(db, 0.0)
+
+    # Consider only frames with actual speech energy (within 45 dB of the loudest).
+    peak = float(np.max(db))
+    speech = db[db > peak - 45]
     if speech.size < 5:
         return {"available": False, "reason": "Audio too quiet to analyze."}
 
@@ -583,7 +612,7 @@ def analyze_volume(y, sr, np) -> dict:
     consistency = _clamp(100 - std_db * 4)  # lower spread => more consistent
 
     quiet_thresh = mean_db - 12
-    loud_thresh = -1.5
+    loud_thresh = peak - 1.5
     quiet = int(np.sum(db < quiet_thresh) / len(db) * 100)
     loud = int(np.sum(db > loud_thresh) / len(db) * 100)
 
@@ -946,13 +975,27 @@ def _content_via_llm(text: str, flagged_buzzwords: list | None = None) -> dict:
         "\"conclusion\": {...}}, \"summary\": str"
     )
     instructions = (
-        "You are an expert presentation coach. Evaluate this presentation "
-        "transcript on five dimensions: introduction (clear opening, context "
-        "& purpose), thesis (central message/goal clearly stated), evidence "
-        "(examples/data/explanations supporting claims), organization "
-        "(logical structure, coherent connections), and conclusion (summarizes "
-        "key points, reinforces message). Give each a 0-100 score and concise, "
-        "actionable feedback."
+        "You are a STRICT, demanding presentation coach grading a transcript. "
+        "Do NOT inflate scores — most attempts are mediocre. Use the FULL 0-100 "
+        "range and be willing to give low scores. Grade each of five dimensions "
+        "by how COMPLETE and developed it actually is: introduction (clear "
+        "opening, context & purpose), thesis (central message/goal clearly "
+        "stated), evidence (examples/data/explanations supporting claims), "
+        "organization (logical structure, coherent connections), and conclusion "
+        "(summarizes key points, reinforces message).\n\n"
+        "Scoring rubric (apply it literally):\n"
+        "- 0-15: the section is missing or essentially absent.\n"
+        "- 16-40: barely present — a single sentence with no development. "
+        "Example: an introduction that only says 'Hi, I'm Nicholas, I'm a coach' "
+        "names the speaker but gives NO context, purpose, or hook, so it scores "
+        "around 30 — never 80.\n"
+        "- 41-60: present but thin, vague, or generic.\n"
+        "- 61-80: clear and reasonably developed.\n"
+        "- 81-100: thorough, specific, and compelling.\n\n"
+        "Hard rules: a section that is only one short sentence CANNOT score "
+        "above 40. Only award 80+ when the section is genuinely complete and "
+        "well-developed. If a whole section (e.g. a conclusion) is absent, score "
+        "it 0-15. Give concise, actionable feedback that names what is missing."
     )
     # Fold an optional buzzword context-check into the SAME call (no extra
     # latency): decide which flagged terms are precise, legitimate vocabulary in
@@ -1028,7 +1071,7 @@ def _content_heuristic(text: str, transitions: dict) -> dict:
                   "i'd like to", "we're here", "my name"]
     intro_hit = has_any(opening, intro_cues)
     cats["introduction"] = {
-        "score": 80 if intro_hit else 45,
+        "score": 72 if intro_hit else 32,
         "feedback": ("Clear opening that sets up the talk."
                      if intro_hit else
                      "Opening is weak — greet the audience and state what the "
@@ -1041,7 +1084,7 @@ def _content_heuristic(text: str, transitions: dict) -> dict:
                    "this matters", "the problem"]
     thesis_hit = has_any(lowered[:1500], thesis_cues)
     cats["thesis"] = {
-        "score": 78 if thesis_hit else 48,
+        "score": 70 if thesis_hit else 32,
         "feedback": ("A central message is stated early."
                      if thesis_hit else
                      "State your core message in one sentence near the start so "
@@ -1078,7 +1121,7 @@ def _content_heuristic(text: str, transitions: dict) -> dict:
                   "finally", "thank you", "key takeaway", "to wrap up", "overall"]
     concl_hit = has_any(closing, concl_cues)
     cats["conclusion"] = {
-        "score": 80 if concl_hit else 42,
+        "score": 74 if concl_hit else 28,
         "feedback": ("There is a clear closing that wraps things up."
                      if concl_hit else
                      "End with an explicit conclusion that summarizes key points "
@@ -1228,6 +1271,14 @@ def _impact_weight(msg: str) -> int:
 # Orchestration
 # ---------------------------------------------------------------------------
 
+def _too_short_msg(seconds: float) -> str:
+    return (
+        f"Recording is too short (~{seconds:.0f}s). Please record at least "
+        f"{int(MIN_DURATION_SEC)} seconds of speech so there's enough content to "
+        "analyze fairly."
+    )
+
+
 def run_analysis(audio_path: str) -> dict:
     warnings = []
 
@@ -1236,10 +1287,21 @@ def run_analysis(audio_path: str) -> dict:
     if shutil.which("ffmpeg") is None:
         return {"error": FFMPEG_MISSING_MSG}
 
+    # Reject too-short clips up front (cheap probe, before transcription) so a
+    # 2-second "Hi I'm X" can't be analyzed.
+    probe = probe_duration(audio_path)
+    if probe is not None and probe < MIN_DURATION_SEC:
+        return {"error": _too_short_msg(probe)}
+
     tx = transcribe(audio_path)
     text, words, duration = tx["text"], tx["words"], tx["duration"]
     if not text:
         return {"error": "Transcription produced no text. Is there speech in the audio?"}
+
+    # Fallback length check when the probe couldn't read the format: use the
+    # transcript's own end time.
+    if probe is None and duration and duration < MIN_DURATION_SEC:
+        return {"error": _too_short_msg(duration)}
 
     y, sr, np = load_audio(audio_path)
     if y is None:
@@ -1454,6 +1516,7 @@ def health():
         # server process can actually find it on PATH.
         "ffmpeg_found": bool(shutil.which("ffmpeg")),
         "db_available": db_available(),
+        "min_recording_sec": MIN_DURATION_SEC,
     })
 
 
