@@ -83,6 +83,9 @@ WHISPERX_BATCH_SIZE = int(os.environ.get("WHISPERX_BATCH_SIZE", "16"))
 # analysis falls back to a built-in heuristic.
 LLM_MODEL = os.environ.get("LLM_MODEL", "llama3.1")
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+# Fixed seed paired with temperature 0 for deterministic greedy decoding, so the
+# same transcript yields the same content analysis on repeated runs.
+LLM_SEED = int(os.environ.get("LLM_SEED", "0"))
 # The "ideal delivery" rewrite is a simple text-cleanup task (strip fillers,
 # tighten phrasing) rather than reasoning, so it uses a smaller/faster Ollama
 # model than the content analysis above. This matters because the rewrite scales
