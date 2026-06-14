@@ -1,123 +1,288 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Presentation Helper — AI Speaking Coach</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-</head>
-<body>
-  <header class="hero">
-    <h1>🎤 Presentation Helper</h1>
-    <p>Upload or record your talk and get coaching on delivery, language, and content.</p>
-  </header>
-
-  <main>
-    <!-- Input panel -->
-    <section class="card input-card">
-      <div class="input-row">
-        <div class="input-block">
-          <h3>Upload audio</h3>
-          <input type="file" id="fileInput" accept="audio/*,video/mp4,.webm" />
-        </div>
-        <div class="divider">or</div>
-        <div class="input-block">
-          <h3>Record</h3>
-          <button id="recordBtn" class="btn">● Start recording</button>
-          <span id="recordStatus" class="muted"></span>
-        </div>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Pitch Prepper — AI Speaking Coach</title>
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='css/style.css') }}"
+    />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  </head>
+  <body>
+    <header class="hero">
+      <div class="authbar" id="authbar">
+        <!-- populated by app.js: shows Login/Register or the current user + Logout -->
       </div>
-      <button id="analyzeBtn" class="btn primary" disabled>Analyze presentation</button>
-      <p id="selected" class="muted"></p>
-    </section>
+      <h1>🎤 Pitch Prepper</h1>
+      <p>
+        Upload or record your talk and get coaching on delivery, language, and
+        content.
+      </p>
+    </header>
 
-    <!-- Loading -->
-    <section id="loading" class="card hidden">
-      <div class="spinner"></div>
-      <p>Transcribing and analyzing… this can take a minute for longer audio.</p>
-    </section>
+    <!-- Auth modal (login / register) -->
+    <div id="authModal" class="modal hidden">
+      <div class="modal-card">
+        <button class="modal-close" id="authClose">×</button>
+        <div class="tabs">
+          <button class="tab active" id="tabLogin" data-mode="login">
+            Log in
+          </button>
+          <button class="tab" id="tabRegister" data-mode="register">
+            Sign up
+          </button>
+        </div>
+        <form id="authForm">
+          <input
+            type="text"
+            id="authUsername"
+            placeholder="Username"
+            autocomplete="username"
+          />
+          <input
+            type="email"
+            id="authEmail"
+            placeholder="Email (optional)"
+            autocomplete="email"
+          />
+          <input
+            type="password"
+            id="authPassword"
+            placeholder="Password (min 6 chars)"
+            autocomplete="current-password"
+          />
+          <p id="authError" class="auth-error"></p>
+          <button type="submit" class="btn primary" id="authSubmit">
+            Log in
+          </button>
+        </form>
+        <p class="muted small">
+          Sign in to save your scores to the global leaderboard.
+        </p>
+      </div>
+    </div>
 
-    <!-- Error -->
-    <section id="error" class="card error hidden"></section>
-
-    <!-- Results -->
-    <section id="results" class="hidden">
-      <!-- Score summary -->
-      <div class="card">
-        <div class="score-grid">
-          <div class="score-hero">
-            <div class="score-circle" id="overallScore">–</div>
-            <div class="score-label">Overall Score</div>
+    <main>
+      <!-- Input panel -->
+      <section class="card input-card">
+        <div class="input-row">
+          <div class="input-block">
+            <h3>Upload audio</h3>
+            <input
+              type="file"
+              id="fileInput"
+              accept="audio/*,video/mp4,.webm"
+            />
           </div>
-          <div class="score-breakdown">
-            <div class="score-item"><span>Delivery</span><div class="bar"><div id="barDelivery"></div></div><b id="scoreDelivery">–</b></div>
-            <div class="score-item"><span>Language</span><div class="bar"><div id="barLanguage"></div></div><b id="scoreLanguage">–</b></div>
-            <div class="score-item"><span>Content</span><div class="bar"><div id="barContent"></div></div><b id="scoreContent">–</b></div>
+          <div class="divider">or</div>
+          <div class="input-block">
+            <h3>Record</h3>
+            <button id="recordBtn" class="btn">● Start recording</button>
+            <span id="recordStatus" class="muted"></span>
           </div>
         </div>
-      </div>
+        <button id="analyzeBtn" class="btn primary" disabled>
+          Analyze presentation
+        </button>
+        <p id="selected" class="muted"></p>
+      </section>
 
-      <!-- Key metrics -->
-      <div class="card">
-        <h2>Key Metrics</h2>
-        <div class="metrics" id="metrics"></div>
-      </div>
+      <!-- Loading -->
+      <section id="loading" class="card hidden">
+        <div class="spinner"></div>
+        <p id="loadingMsg">
+          Transcribing and analyzing… this can take a minute for longer audio.
+        </p>
+      </section>
 
-      <!-- Top recommendations -->
-      <div class="card">
-        <h2>Top 3 Recommendations</h2>
-        <ol id="topRecs" class="recs"></ol>
-        <div class="two-col">
-          <div>
-            <h3 class="good">✓ Strengths</h3>
-            <ul id="strengths"></ul>
-          </div>
-          <div>
-            <h3 class="bad">△ Areas to improve</h3>
-            <ul id="improvements"></ul>
+      <!-- Error -->
+      <section id="error" class="card error hidden"></section>
+
+      <!-- Results -->
+      <section id="results" class="hidden">
+        <p id="savedNote" class="saved-note hidden"></p>
+        <!-- Score summary -->
+        <div class="card">
+          <div class="score-grid">
+            <div class="score-hero">
+              <div class="score-circle" id="overallScore">–</div>
+              <div class="score-label">Overall Score</div>
+            </div>
+            <div class="score-breakdown">
+              <div class="score-item">
+                <span>Delivery</span>
+                <div class="bar"><div id="barDelivery"></div></div>
+                <b id="scoreDelivery">–</b>
+              </div>
+              <div class="score-item">
+                <span>Language</span>
+                <div class="bar"><div id="barLanguage"></div></div>
+                <b id="scoreLanguage">–</b>
+              </div>
+              <div class="score-item">
+                <span>Content</span>
+                <div class="bar"><div id="barContent"></div></div>
+                <b id="scoreContent">–</b>
+              </div>
+            </div>
           </div>
         </div>
-      </div>
 
-      <!-- Charts -->
-      <div class="card">
-        <h2>Visualizations</h2>
-        <div class="charts">
-          <div class="chart-box"><h3>Speaking rate (WPM)</h3><canvas id="wpmChart"></canvas></div>
-          <div class="chart-box"><h3>Pitch (Hz)</h3><canvas id="pitchChart"></canvas></div>
-          <div class="chart-box"><h3>Volume (dB)</h3><canvas id="volumeChart"></canvas></div>
-          <div class="chart-box"><h3>Pause timeline</h3><canvas id="pauseChart"></canvas></div>
-          <div class="chart-box"><h3>Filler words</h3><canvas id="fillerChart"></canvas></div>
-          <div class="chart-box"><h3>Content scores</h3><canvas id="contentChart"></canvas></div>
+        <!-- Key metrics -->
+        <div class="card">
+          <h2>Key Metrics</h2>
+          <div class="metrics" id="metrics"></div>
+        </div>
+
+        <!-- Top recommendations -->
+        <div class="card">
+          <h2>Top 3 Recommendations</h2>
+          <ol id="topRecs" class="recs"></ol>
+          <div class="two-col">
+            <div>
+              <h3 class="good">✓ Strengths</h3>
+              <ul id="strengths"></ul>
+            </div>
+            <div>
+              <h3 class="bad">△ Areas to improve</h3>
+              <ul id="improvements"></ul>
+            </div>
+          </div>
+        </div>
+
+        <!-- Ideal delivery (ElevenLabs TTS) — revealed only when configured -->
+        <div class="card hidden" id="idealCard">
+          <h2>🔊 Hear how it could sound</h2>
+          <p class="muted">
+            An AI-polished take on <em>your</em> talk — fillers trimmed,
+            phrasing tightened — read back in a clear, well-paced voice.
+            Generated only when you ask, and sends your transcript text to
+            ElevenLabs.
+          </p>
+          <p class="muted small">
+            💡 <b>Click sentences below</b> to improve just that part of your
+            talk — or leave them unselected to redo the whole thing. (Improving
+            a shorter part is faster.)
+          </p>
+          <div id="idealPicker" class="ideal-picker"></div>
+          <div class="ideal-controls">
+            <span id="idealSelInfo" class="muted small"
+              >Improving: whole talk</span
+            >
+            <button type="button" class="linkbtn hidden" id="idealClear">
+              Clear selection
+            </button>
+          </div>
+          <button class="btn primary ideal-btn" id="idealBtn">
+            ▶ Generate ideal delivery
+          </button>
+          <span id="idealStatus" class="muted"></span>
+          <div id="idealOutput" class="hidden">
+            <audio id="idealAudio" controls></audio>
+            <details class="ideal-script">
+              <summary>Show the improved script</summary>
+              <p id="idealScript" class="transcript"></p>
+            </details>
+          </div>
+        </div>
+
+        <!-- Charts -->
+        <div class="card">
+          <h2>
+            Visualizations
+            <span class="muted" style="font-weight: 400; font-size: 0.6em"
+              >(click any chart to enlarge)</span
+            >
+          </h2>
+          <div class="charts">
+            <div class="chart-box">
+              <h3>Speaking rate (WPM)</h3>
+              <canvas id="wpmChart"></canvas>
+            </div>
+            <div class="chart-box">
+              <h3>Pitch (Hz)</h3>
+              <canvas id="pitchChart"></canvas>
+            </div>
+            <div class="chart-box">
+              <h3>Volume (dB)</h3>
+              <canvas id="volumeChart"></canvas>
+            </div>
+            <div class="chart-box">
+              <h3>Pause timeline</h3>
+              <canvas id="pauseChart"></canvas>
+            </div>
+            <div class="chart-box">
+              <h3>Filler words</h3>
+              <canvas id="fillerChart"></canvas>
+            </div>
+            <div class="chart-box">
+              <h3>Content scores</h3>
+              <canvas id="contentChart"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <!-- Content feedback -->
+        <div class="card">
+          <h2>Content &amp; Structure</h2>
+          <p id="contentSummary" class="muted"></p>
+          <div id="contentCats" class="content-cats"></div>
+        </div>
+
+        <!-- Language details -->
+        <div class="card">
+          <h2>Language Details</h2>
+          <div id="languageDetails" class="two-col"></div>
+        </div>
+
+        <!-- Transcript -->
+        <div class="card">
+          <h2>Transcript</h2>
+          <p id="transcript" class="transcript"></p>
+        </div>
+
+        <p id="warnings" class="muted"></p>
+      </section>
+
+      <!-- Leaderboard (revealed by app.js only when MongoDB is reachable) -->
+      <section class="card hidden" id="leaderboardCard">
+        <h2>🏆 Leaderboard</h2>
+        <p class="muted small" id="leaderboardNote">
+          Top scores across everyone. Sign in to get on the board.
+        </p>
+        <table class="leaderboard" id="leaderboardTable">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>User</th>
+              <th>Best score</th>
+              <th>Attempts</th>
+            </tr>
+          </thead>
+          <tbody id="leaderboardBody"></tbody>
+        </table>
+      </section>
+    </main>
+
+    <footer>
+      <p class="muted">
+        Pitch Prepper · Flask · Whisper · Librosa · MongoDB · Chart.js
+      </p>
+    </footer>
+
+    <!-- Enlarged-chart modal -->
+    <div id="chartModal" class="modal hidden">
+      <div class="modal-card chart-modal-card">
+        <button class="modal-close" id="chartModalClose">×</button>
+        <h3 id="chartModalTitle" style="margin-top: 0"></h3>
+        <div class="chart-modal-body">
+          <canvas id="chartModalCanvas"></canvas>
         </div>
       </div>
+    </div>
 
-      <!-- Content feedback -->
-      <div class="card">
-        <h2>Content &amp; Structure</h2>
-        <p id="contentSummary" class="muted"></p>
-        <div id="contentCats" class="content-cats"></div>
-      </div>
-
-      <!-- Language details -->
-      <div class="card">
-        <h2>Language Details</h2>
-        <div id="languageDetails" class="two-col"></div>
-      </div>
-
-      <!-- Transcript -->
-      <div class="card">
-        <h2>Transcript</h2>
-        <p id="transcript" class="transcript"></p>
-      </div>
-
-      <p id="warnings" class="muted"></p>
-    </section>
-  </main>
-
-  <footer><p class="muted">Presentation Helper · Flask · Whisper · Librosa · Chart.js</p></footer>
-
-  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
-</body>
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+  </body>
 </html>
