@@ -1,9 +1,11 @@
-# 🎤 Presentation Helper
+# 🎤 Presentation Helper — *Pitch Prepper*
 
 **Your personal AI speaking coach.** Upload or record a talk and, in about a
 minute, get a scored dashboard with concrete, actionable feedback on your
 **delivery**, **language**, and **content** — all processed **locally on your own
 machine**. No accounts, no API keys, nothing leaves your computer.
+
+> The app brands itself **Pitch Prepper** in the UI — that's this same project.
 
 ---
 
@@ -113,7 +115,8 @@ On the **Home** screen you have two options: **Upload an audio file**
 Click **Login / Sign Up** in the top-right to create an account (username +
 password; email optional). While you're logged in, every analysis is
 automatically recorded and ranked on the global leaderboard. This needs MongoDB —
-skip it and the core analysis still works exactly the same.
+the buttons appear only when a database is connected, and skipping it leaves the
+core analysis working exactly the same.
 
 ### 3. Read your results dashboard
 
@@ -124,9 +127,9 @@ color-coded — green (good ≥ 75), amber (fair 55–74), and red (needs work <
 
 ### 4. Dive into the detailed analytics
 
-Scroll to the **Charts** for the six visualizations — speaking rate (WPM), pitch
-variation, filler words, pause timeline, content effectiveness, and volume
-dynamics. **Click any chart to enlarge it.**
+Scroll to the **Detailed Analytics** for the six visualizations — speaking rate
+(WPM), pitch (Hz), filler words, pause timeline, volume (dB), and a content-scores
+radar. **Click any chart to enlarge it.**
 
 The full dashboard also includes a **Content & Structure** breakdown
 (intro, thesis, evidence, organization, conclusion), **Language Details**
@@ -209,7 +212,8 @@ Sign in to track your progress and compete on a **global leaderboard**.
 - Logins use signed session cookies; passwords are stored **hashed** (never in plain text).
 
 This feature needs **MongoDB**. The rest of the app works fine without it — if
-MongoDB isn't reachable, the sign-in buttons simply report it's unavailable.
+MongoDB isn't reachable, the **Login / Sign Up** buttons are simply hidden and
+analysis runs exactly the same.
 
 ```powershell
 # Easiest: run MongoDB in Docker
@@ -275,12 +279,19 @@ Everything works out of the box, but you can tune behavior with environment
 variables. In PowerShell, set one with `$env:NAME = "value"` before `python app.py`
 (on macOS/Linux, `export NAME=value`).
 
+**Prefer a file?** Copy `backend/.env.example` to `backend/.env` and put your
+values there — the app loads it automatically on startup (via `python-dotenv`), so
+your settings stick no matter how you launch it (shell, IDE "Run" button,
+double-click). The real `.env` is gitignored, so secrets like `SECRET_KEY` and API
+keys never get committed.
+
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `WHISPER_MODEL` | `base` | Accuracy vs. speed: `tiny`·`base`·`small`·`medium`·`large-v3`. Bigger = better but slower. |
+| `WHISPER_MODEL` | `base` | Accuracy vs. speed: `tiny`·`base`·`small`·`medium`·`large-v2`·`large-v3`. Bigger = better but slower. |
 | `TRANSCRIBE_BACKEND` | `whisperx` | `whisperx` (accurate word timings) or `whisper` (lighter fallback). |
 | `WHISPERX_DEVICE` | `auto` | `auto`·`cpu`·`cuda`. Use `cuda` if you have a compatible NVIDIA GPU. |
 | `WHISPERX_COMPUTE_TYPE` | auto | e.g. `int8` (CPU) or `float16` (GPU). |
+| `WHISPERX_BATCH_SIZE` | `16` | WhisperX transcription batch size. Lower it if you hit memory limits. |
 | `LLM_MODEL` | `llama3.1` | Which Ollama model to use for content analysis. |
 | `IDEAL_REWRITE_MODEL` | `llama3.2:3b` | Smaller/faster Ollama model used **only** for the "Hear how it could sound" rewrite. The rewrite scales with transcript length, so an 8B model is slow on long talks; a 3B model cleans up just as well. Run `ollama pull llama3.2:3b`. |
 | `OLLAMA_HOST` | `http://localhost:11434` | Where Ollama is listening. |
@@ -292,8 +303,13 @@ variables. In PowerShell, set one with `$env:NAME = "value"` before `python app.
 | `ELEVENLABS_API_KEY` | *(unset)* | Enables the optional **"Hear how it could sound"** playback. When unset, the feature is hidden and nothing is ever sent off-machine. |
 | `ELEVENLABS_VOICE_ID` | *(auto)* | Voice that reads the polished script. Leave unset to auto-pick a voice you own from your account. **Free API tier:** you must use your own voice — see the note below. |
 | `ELEVENLABS_MODEL` | `eleven_multilingual_v2` | ElevenLabs text-to-speech model. |
+| `ELEVENLABS_API_BASE` | `https://api.elevenlabs.io` | ElevenLabs API base URL (override only for a proxy/self-host). |
 | `IDEAL_DELIVERY_MAX_CHARS` | `5000` | Caps the transcript length sent for rewrite + synthesis (latency / credit control). |
+| `BUZZWORDS_FILE` | `backend/buzzwords.json` | JSON file of `buzzword → plainer suggestion` pairs. Edit it and restart to tune the buzzword list without touching code. |
+| `ANALYSIS_WORKERS` | `2` | How many analyses can run concurrently in the background thread pool. |
+| `JOB_RETENTION_SEC` | `900` | How long a finished analysis job is kept so a dropped status poll can be retried. |
 | `PORT` | `5000` | Port the web app runs on. |
+| `FLASK_DEBUG` | *(unset)* | Set to any non-empty value to run Flask in debug mode (auto-reload + tracebacks). Leave unset in production. |
 
 **Tip:** on a CPU-only machine, `WHISPER_MODEL=tiny` or `small` makes analysis
 noticeably faster.
@@ -302,16 +318,22 @@ noticeably faster.
 
 ## 👩‍💻 For developers
 
-**Tech stack:** Flask (single-file backend `app.py`) · WhisperX · Librosa · Ollama / Llama 3.1 (local) · ElevenLabs (optional TTS) · HTML/CSS/JS · Chart.js
+**Tech stack:** Flask (single-file backend `app.py`) · WhisperX (openai-whisper
+fallback) · Librosa · Ollama / Llama 3.1 (local) · ElevenLabs (optional TTS) ·
+MongoDB / PyMongo (optional accounts + leaderboard) · python-dotenv · HTML/CSS/JS ·
+Tailwind CSS (Play CDN) · Chart.js
 
 **Architecture.** The backend is intentionally one file with a **modular** structure:
 each analyzer (`analyze_speaking_rate`, `analyze_pitch`, `analyze_volume`,
 `analyze_pauses`, `analyze_fillers`, `analyze_transitions`, `analyze_buzzwords`,
-`analyze_repetition`, `analyze_content`, …) is an independent function that takes
-transcript/audio data and returns a JSON-serializable dict. `run_analysis()`
-orchestrates them, so new analyzers can be added without touching the others. Heavy
-dependencies (Whisper, Librosa, NumPy, the local LLM) are imported lazily — if one is
-unavailable, that analyzer is skipped with a warning rather than crashing the request.
+`analyze_repetition`, `extract_keywords`, `analyze_rhythm`, `analyze_content`, …) is
+an independent function that takes transcript/audio data and returns a
+JSON-serializable dict. `run_analysis()` orchestrates them, so new analyzers can be
+added without touching the others. Heavy dependencies (Whisper, Librosa, NumPy, the
+local LLM) are imported lazily — if one is unavailable, that analyzer is skipped with
+a warning rather than crashing the request. Analysis runs in a background thread pool
+and the client polls for the result, so long transcriptions don't hold an HTTP
+connection open.
 
 **API**
 
@@ -333,7 +355,9 @@ Accounts & leaderboard are backed by **MongoDB** (`pymongo`), in a self-containe
 module (`get_db`, `current_user`, `_record_result`, and the `/api/*` routes) — and,
 like the analysis features, degrade gracefully when the database is unavailable.
 
-**Future extensions (placeholders by design).** Silero VAD, LanguageTool
-grammar/readability, Hugging Face sentiment/confidence, and webcam-based
-eye-contact/body-language analysis can be added as new analyzer functions following
-the same contract.
+**Possible future extensions.** Because every analyzer follows the same
+contract (transcript/audio in, JSON-serializable dict out), ideas like Silero VAD,
+LanguageTool grammar/readability, Hugging Face sentiment/confidence, or webcam-based
+eye-contact/body-language analysis could be added as new analyzer functions without
+disturbing the existing ones. (None are implemented yet — they're directions, not
+stubs in the code.)
