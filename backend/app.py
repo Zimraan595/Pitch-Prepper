@@ -1,26 +1,16 @@
 """Pitch Prepper — single-file Flask backend.
 
-A presentation coaching web application. A user uploads or records a
-presentation audio file; the app transcribes it (Whisper), analyzes delivery
-(speaking rate, pitch, volume, pauses, filler words), language quality
-(transitions, buzzwords, repetition, keywords) and content/structure (LLM or
-heuristic fallback), then returns a scored dashboard with visualization data.
+A presentation coaching web app: transcribe an audio upload (Whisper), analyze
+delivery (rate, pitch, volume, pauses, fillers), language (transitions,
+buzzwords, repetition, keywords) and content/structure (LLM or heuristic
+fallback), then return a scored dashboard with visualization data.
 
-Design goals
-------------
-* Single-file backend (`app.py`) as requested.
-* Modular: each analysis concern is an independent, pure-ish function that
-  takes transcript/audio data and returns a JSON-serializable dict. New
-  analyzers can be added without touching the others.
-* Graceful degradation: heavy/optional dependencies (whisper, librosa, numpy)
-  and the local LLM are used lazily. If one is unavailable, that analyzer is
-  skipped or falls back, instead of crashing the whole request.
+Each analyzer is an independent function returning a JSON-serializable dict.
+Heavy/optional deps (whisper, librosa, numpy, the local LLM) load lazily and
+degrade gracefully: if one is missing, that analyzer is skipped or falls back
+instead of failing the whole request.
 
-Run
----
-    pip install -r requirements.txt
-    python app.py
-    # open http://localhost:5000
+Run: `pip install -r requirements.txt && python app.py`, open localhost:5000.
 """
 
 from __future__ import annotations
@@ -43,12 +33,9 @@ from collections import Counter
 
 from flask import Flask, request, jsonify, render_template, session
 
-# Load config from a local .env file (backend/.env) if present, so MONGO_URI /
-# SECRET_KEY / API keys work no matter how the app is launched (Git Bash, an IDE
-# "Run" button, double-click). Pointed at the file next to this module so it
-# loads regardless of cwd. override=True makes the .env authoritative: a stale
-# shell `export` (e.g. an old MONGO_URI left in a terminal) can't silently shadow
-# it. Optional: if python-dotenv isn't installed, real env vars are still used.
+# Load backend/.env if present so config works however the app is launched.
+# Pinned to the path next to this module (cwd-independent); override=True makes
+# the file authoritative over stale shell exports. No-op if dotenv isn't installed.
 try:
     from dotenv import load_dotenv
     load_dotenv(
@@ -65,60 +52,49 @@ except ImportError:
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 200 * 1024 * 1024  # 200 MB upload cap
 
-# Transcription backend: "whisperx" (default — adds forced alignment for
-# accurate word timestamps) or "whisper" (the original openai-whisper).
+# "whisperx" (default — forced alignment for accurate word timestamps) or
+# "whisper" (original openai-whisper).
 TRANSCRIBE_BACKEND = os.environ.get("TRANSCRIBE_BACKEND", "whisperx").lower()
 
-# Whisper model size: tiny/base/small/medium/large-v2/large-v3.
-# Smaller = faster, less RAM. WhisperX works with any of these.
+# Model size: tiny/base/small/medium/large-v2/large-v3. Smaller = faster, less RAM.
 WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "base")
 
-# WhisperX runtime. Device "auto" picks CUDA when available, else CPU.
-# compute_type defaults to float16 on GPU, int8 on CPU (override if needed).
+# Device "auto" picks CUDA when available, else CPU. compute_type defaults to
+# float16 on GPU, int8 on CPU.
 WHISPERX_DEVICE = os.environ.get("WHISPERX_DEVICE", "auto")
 WHISPERX_COMPUTE_TYPE = os.environ.get("WHISPERX_COMPUTE_TYPE", "")
 WHISPERX_BATCH_SIZE = int(os.environ.get("WHISPERX_BATCH_SIZE", "16"))
 
-# Content analysis uses a local LLM via Ollama — fully on-device, no API key,
-# nothing sent to any external service. If Ollama isn't running, content
-# analysis falls back to a built-in heuristic.
+# Content analysis uses a local LLM via Ollama (on-device, no API key). Falls
+# back to a built-in heuristic if Ollama isn't running.
 LLM_MODEL = os.environ.get("LLM_MODEL", "llama3.1")
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
-# Fixed seed paired with temperature 0 for deterministic greedy decoding, so the
-# same transcript yields the same content analysis on repeated runs.
+# Fixed seed + temperature 0 = deterministic decoding, so the same transcript
+# yields the same analysis across runs.
 LLM_SEED = int(os.environ.get("LLM_SEED", "0"))
-# The "ideal delivery" rewrite is a simple text-cleanup task (strip fillers,
-# tighten phrasing) rather than reasoning, so it uses a smaller/faster Ollama
-# model than the content analysis above. This matters because the rewrite scales
-# with transcript length — an 8B model on CPU is very slow on a 5-minute talk —
-# and a 3B model does cleanup just as well. Falls back to the filler-stripping
-# heuristic if this model isn't pulled (`ollama pull llama3.2:3b`).
+# The "ideal delivery" rewrite is text cleanup, not reasoning, so it uses a
+# smaller/faster model — the rewrite scales with transcript length and an 8B
+# model on CPU is too slow. Falls back to the filler-stripping heuristic if this
+# model isn't pulled (`ollama pull llama3.2:3b`).
 IDEAL_REWRITE_MODEL = os.environ.get("IDEAL_REWRITE_MODEL", "llama3.2:3b")
 
 # --- Ideal-delivery playback (ElevenLabs text-to-speech) -------------------
-# OPTIONAL, opt-in cloud feature. The "hear how it could sound" card rewrites a
-# user's transcript into a tighter script and reads it back in a clear voice.
-# Unlike every other feature here it sends text to ElevenLabs' servers, so it is
-# OFF by default: when ELEVENLABS_API_KEY is unset the card is simply hidden and
-# the app stays fully local — the same graceful-degradation pattern as Ollama
-# and MongoDB. Synthesis runs only on an explicit user click, never during a
-# normal analysis.
+# Optional, opt-in cloud feature: the only one that sends text off-machine, so
+# it's OFF unless ELEVENLABS_API_KEY is set (card hidden otherwise) and runs only
+# on an explicit click, never during a normal analysis.
 ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY", "").strip()
 ELEVENLABS_API_BASE = os.environ.get("ELEVENLABS_API_BASE", "https://api.elevenlabs.io")
-# Voice to synthesize with. Leave UNSET to auto-pick a voice from your account
-# (preferring your own cloned/generated voices). Important: the free ElevenLabs
-# API tier cannot use the shared "library"/premade voices (Rachel, etc.) — it
-# returns HTTP 402 — so you must use a voice you own. See _resolve_voice_id().
+# Leave UNSET to auto-pick a voice you own. The free API tier can't use the
+# shared library/premade voices (HTTP 402), so a voice you own is required.
 ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "").strip()
 ELEVENLABS_MODEL = os.environ.get("ELEVENLABS_MODEL", "eleven_multilingual_v2")
-# Cap the text sent for a rewrite + synthesis — keeps latency and credit use sane.
+# Cap text per rewrite + synthesis to keep latency and credit use sane.
 IDEAL_DELIVERY_MAX_CHARS = int(os.environ.get("IDEAL_DELIVERY_MAX_CHARS", "5000"))
 
 # --- User accounts, sessions & leaderboard (MongoDB) -----------------------
-# Login sessions are signed with this key — set a real SECRET_KEY in production.
+# Sessions are signed with this key — set a real SECRET_KEY in production.
 app.secret_key = os.environ.get("SECRET_KEY", "dev-insecure-change-me")
-# Keep users logged in across browser restarts (sessions are marked permanent on
-# login/register). Default 30 days; override with SESSION_DAYS.
+# Keep users logged in across browser restarts. Default 30 days.
 SESSION_DAYS = int(os.environ.get("SESSION_DAYS", "30"))
 app.permanent_session_lifetime = datetime.timedelta(days=SESSION_DAYS)
 MONGO_URI = os.environ.get("MONGO_URI", "mongodb://localhost:27017")
@@ -133,10 +109,8 @@ ALLOWED_EXTENSIONS = {
     "wav", "mp3", "m4a", "mp4", "ogg", "flac", "webm", "aac", "opus",
 }
 
-# Whisper/WhisperX (and librosa for some formats) decode audio by invoking the
-# `ffmpeg` binary as a subprocess. If it isn't on PATH the failure is an opaque
-# FileNotFoundError ("[WinError 2] The system cannot find the file specified" on
-# Windows), so we detect it up front and return this actionable message instead.
+# Whisper decodes audio via the ffmpeg binary; if it's not on PATH the failure
+# is an opaque FileNotFoundError, so we detect it up front and return this instead.
 FFMPEG_MISSING_MSG = (
     "ffmpeg was not found on PATH. Whisper needs the ffmpeg binary to decode "
     "audio, so transcription can't start without it. Install ffmpeg "
@@ -145,9 +119,7 @@ FFMPEG_MISSING_MSG = (
     "NEW terminal so it picks up the updated PATH."
 )
 
-# Minimum amount of audio we're willing to analyze. Anything shorter is rejected
-# so users can't game the tool with a 2-second "Hi I'm X" clip. Override with
-# MIN_RECORDING_SEC.
+# Reject clips shorter than this so a 2-second "Hi I'm X" can't game the tool.
 MIN_DURATION_SEC = float(os.environ.get("MIN_RECORDING_SEC", "15"))
 
 # --- Speaking-rate reference (words per minute) ----------------------------
@@ -157,24 +129,21 @@ WPM_TOO_SLOW = 110
 WPM_TOO_FAST = 165
 WINDOW_SECONDS = 15  # bucket size for timeline metrics
 
-# Audio-feature analysis settings. A lower sample rate + larger hop dramatically
-# speed up pitch/volume extraction (especially librosa.pyin) with no meaningful
-# loss for speech coaching metrics.
+# Lower sample rate + larger hop speed up pitch/volume extraction (especially
+# librosa.pyin) with no meaningful loss for coaching metrics.
 ANALYSIS_SR = 16000
 ANALYSIS_HOP = 1024
 
 # --- Filler words -----------------------------------------------------------
-# Multi-word fillers are checked first so "you know" isn't double counted.
+# Checked first so "you know" isn't double counted.
 FILLER_PHRASES = ["you know", "i mean", "sort of", "kind of"]
 
-# "Hard" fillers are almost always disfluencies regardless of position, so they
-# are counted wherever they appear.
+# Almost always disfluencies, so counted wherever they appear.
 FILLER_WORDS_HARD = {"um", "uh", "uhm", "er", "erm", "ah", "hmm", "mm", "mhm"}
 
-# Discourse markers double as ordinary words ("the results are SO good", "tools
-# LIKE this"), so counting every occurrence over-penalizes normal speech. They
-# read as filler mainly in the sentence-/clause-initial position ("So, ...",
-# "Well, ...", "Basically, ..."), so analyze_fillers only counts them there.
+# Discourse markers double as ordinary words, so counting every occurrence
+# over-penalizes normal speech. analyze_fillers only counts them sentence-/
+# clause-initial ("So, ...", "Well, ...").
 FILLER_DISCOURSE = {
     "like", "basically", "actually", "literally", "so",
     "right", "okay", "well", "yeah",
@@ -191,18 +160,13 @@ TRANSITION_PHRASES = [
 ]
 
 # --- Buzzwords + clearer suggested alternatives -----------------------------
-# Deliberately limited to topic-independent filler — empty corporate jargon and
-# vague praise that reads as fluff in any presentation. Context-dependent
-# technical terms (leverage, robust, scalable, ecosystem, bandwidth, seamless,
-# paradigm, actionable, mission-critical, best practice) are intentionally
-# absent: they're precise, legitimate vocabulary in many fields, so flagging
-# them produced false positives on technical talks. Buzzwords are advisory only
-# and do NOT affect the language score (see analyze_buzzwords / compute_scores).
+# Limited to topic-independent filler. Context-dependent technical terms
+# (leverage, robust, scalable, …) are excluded — they're legitimate vocabulary
+# in many fields and flagging them caused false positives on technical talks.
+# Advisory only; does NOT affect the language score (see compute_scores).
 #
-# The list lives in an external JSON file (BUZZWORDS_FILE, default
-# backend/buzzwords.json) so it can be tuned without code changes — edit the
-# file and restart. The dict below is the built-in fallback used when that file
-# is missing or unreadable, keeping the feature working offline / out-of-the-box.
+# Loaded from BUZZWORDS_FILE (default backend/buzzwords.json) so it's tunable
+# without code changes. The dict below is the fallback if that file is unreadable.
 _DEFAULT_BUZZWORDS = {
     "synergy": "cooperation / working together",
     "disrupt": "change / improve",
@@ -229,9 +193,9 @@ BUZZWORDS_FILE = os.environ.get(
 def _load_buzzwords() -> dict:
     """Load buzzword -> alternative pairs from BUZZWORDS_FILE.
 
-    Read once at startup. Falls back to the built-in defaults if the file is
-    missing or malformed, so a bad edit can never take the feature down. Keys are
-    lowercased to match the case-insensitive transcript scan in analyze_buzzwords.
+    Falls back to the built-in defaults if the file is missing or malformed, so a
+    bad edit can't take the feature down. Keys lowercased for the case-insensitive
+    scan in analyze_buzzwords.
     """
     try:
         with open(BUZZWORDS_FILE, encoding="utf-8") as fh:
@@ -303,9 +267,8 @@ def _tokenize(text: str):
 # Module 1 — Speech to text (WhisperX, with openai-whisper fallback)
 # ---------------------------------------------------------------------------
 
-# Models are expensive to load (hundreds of MB) so they're loaded once and
-# reused across requests. The lock prevents two concurrent requests on the
-# threaded dev server from loading the same model twice.
+# Models are expensive to load (hundreds of MB), so load once and reuse. The lock
+# stops two concurrent requests from loading the same model twice.
 _model_lock = threading.Lock()
 _whisperx_model = None
 _whisperx_align: dict = {}   # language_code -> (align_model, metadata)
@@ -315,10 +278,9 @@ _whisper_model = None
 def transcribe(audio_path: str) -> dict:
     """Transcribe audio with word-level timestamps.
 
-    Uses WhisperX by default — it runs Whisper for the transcript and then a
-    forced-alignment pass for much more accurate word timestamps, which the
-    pause/WPM/filler analyzers depend on. Falls back to openai-whisper if
-    WhisperX is unavailable or TRANSCRIBE_BACKEND=whisper.
+    Uses WhisperX (transcript + forced-alignment pass for accurate word
+    timestamps, which the pause/WPM/filler analyzers depend on). Falls back to
+    openai-whisper if WhisperX is unavailable or TRANSCRIBE_BACKEND=whisper.
 
     Returns {text, language, words[], segments[], duration} where each word is
     {word, start, end}. Raises RuntimeError if no backend is available.
@@ -402,8 +364,8 @@ def _transcribe_whisperx(audio_path: str) -> dict:
             token = (w.get("word") or "").strip()
             if not token:
                 continue
-            # Some words may be unaligned (no timing) — fall back to segment bounds
-            # so word counts stay accurate for WPM.
+            # Unaligned words have no timing — fall back to segment bounds so word
+            # counts stay accurate for WPM.
             start = w.get("start")
             end = w.get("end")
             words.append({
@@ -485,9 +447,8 @@ def _transcribe_whisper(audio_path: str) -> dict:
 def load_audio(audio_path: str):
     """Load audio as mono waveform. Returns (y, sr, np) or (None, None, None).
 
-    Resampled to ANALYSIS_SR (16 kHz). The feature analyzers (pitch up to 400 Hz,
-    RMS volume, silence) don't need full fidelity, and a lower rate makes the
-    expensive pitch tracking several times faster with no meaningful quality loss.
+    Resampled to ANALYSIS_SR (16 kHz): the feature analyzers don't need full
+    fidelity, and the lower rate makes pitch tracking several times faster.
     """
     try:
         import numpy as np
@@ -502,10 +463,8 @@ def load_audio(audio_path: str):
 
 
 def probe_duration(audio_path: str):
-    """Best-effort media duration in seconds, or None if it can't be determined.
-
-    Used to reject too-short clips up front (before the expensive transcription).
-    """
+    """Media duration in seconds (best-effort), or None. Used to reject too-short
+    clips before the expensive transcription."""
     try:
         import soundfile as sf
         return float(sf.info(audio_path).duration)
@@ -539,8 +498,8 @@ def analyze_speaking_rate(words: list, duration: float) -> dict:
         span_min = span_sec / 60.0
         wpm = count / span_min if span_min > 0 else 0
         label = "ok"
-        # Don't flag very short tail windows — a 2s remainder with a couple of
-        # words divides by a tiny span and spuriously reads as "too fast".
+        # Don't flag very short tail windows — a 2s remainder divides by a tiny
+        # span and spuriously reads as "too fast".
         if span_sec >= 5:
             if wpm and wpm < WPM_TOO_SLOW:
                 label = "too_slow"
@@ -582,8 +541,8 @@ def analyze_pitch(y, sr, np) -> dict:
         return {"available": False, "reason": "Librosa/numpy not available."}
     try:
         import librosa
-        # Larger hop = far fewer frames for pyin's Viterbi decode (the slow part),
-        # which is plenty of resolution for pitch-variation metrics.
+        # Larger hop = far fewer frames for pyin's slow Viterbi decode, still
+        # plenty of resolution for pitch-variation metrics.
         f0, voiced_flag, _ = librosa.pyin(
             y, fmin=70, fmax=400, sr=sr, frame_length=2048, hop_length=ANALYSIS_HOP,
         )
@@ -640,9 +599,8 @@ def analyze_volume(y, sr, np) -> dict:
     except Exception as exc:
         return {"available": False, "reason": f"Volume analysis failed: {exc}"}
 
-    # Positive dB scale referenced to a fixed quiet floor (~ -100 dBFS), so the
-    # numbers read like a sound-level meter (e.g. 40-90) instead of the negative
-    # "dB below loudest" scale. Clamp at 0 so it can never go negative.
+    # Positive dB scale against a fixed quiet floor, so numbers read like a
+    # sound-level meter (e.g. 40-90). Clamp at 0 so it never goes negative.
     REF = 1e-5
     db = 20.0 * np.log10(np.maximum(rms, 1e-10) / REF)
     db = np.maximum(db, 0.0)
@@ -684,19 +642,16 @@ def analyze_volume(y, sr, np) -> dict:
 # Module 2d — Pause analysis (timestamps + silence detection)
 # ---------------------------------------------------------------------------
 
-# Pronoun forms that are always capitalized mid-sentence, so a capitalized next
-# word here is NOT a reliable "new sentence" signal.
+# Always capitalized mid-sentence, so not a reliable "new sentence" signal.
 _ALWAYS_CAP = {"i", "i'm", "i've", "i'll", "i'd"}
 
 
 def _looks_like_sentence_break(prev_word: str, next_word: str) -> bool:
     """Heuristic: did a sentence/clause likely end between these two words?
 
-    WhisperX word tokens frequently drop punctuation, so checking only for a
-    trailing '.', '!' or '?' misses most real breaks (which is why "strategic"
-    pauses almost never registered). As a fallback we use the fact that the model
-    still capitalizes the first word of a new sentence: a capitalized next word
-    (other than the pronoun "I") usually starts one.
+    WhisperX often drops punctuation, so a trailing '.'/'!'/'?' misses most real
+    breaks. Fallback: the model still capitalizes the first word of a new
+    sentence, so a capitalized next word (other than "I") usually starts one.
     """
     if prev_word.rstrip().endswith((".", "!", "?")):
         return True
@@ -781,10 +736,8 @@ def analyze_fillers(words: list, text: str, duration: float) -> dict:
             t = _nearest_word_time(words, m.start(), text)
             found.append({"word": phrase, "t": t})
 
-    # Single-token pass over the timestamped words:
-    #  - Hard fillers (um, uh, …): always count (timestamps are exact here).
-    #  - Discourse markers (so, well, yeah, …): count when REPEATED back-to-back
-    #    ("yeah yeah yeah"), which is unambiguous filler/backchannel.
+    # Single-token pass: hard fillers always count; discourse markers count only
+    # when repeated back-to-back ("yeah yeah yeah"), which is unambiguous filler.
     prev_token = None
     for w in words:
         token = re.sub(r"[^a-z']", "", w["word"].lower())
@@ -794,9 +747,8 @@ def analyze_fillers(words: list, text: str, duration: float) -> dict:
             found.append({"word": token, "t": _round(w["start"], 2)})
         prev_token = token
 
-    # Discourse markers (so, well, like, …): also count when sentence-/clause-
-    # initial — at the very start or right after sentence punctuation — so
-    # ordinary mid-sentence usage isn't penalized but "So, ..." openers are.
+    # Also count discourse markers when sentence-/clause-initial, so "So, ..."
+    # openers are flagged but ordinary mid-sentence usage isn't.
     for marker in FILLER_DISCOURSE:
         pattern = r"(?:^|[.!?]['\"\)\]]?\s+)(" + re.escape(marker) + r")\b"
         for m in re.finditer(pattern, lowered):
@@ -874,10 +826,8 @@ def analyze_buzzwords(text: str) -> dict:
     density = total / word_count * 100
     overused = {b: c for b, c in found.items() if c >= 3}
 
-    # Advisory only — no score. Buzzwords surface plainer-wording tips but do not
-    # feed the language grade: even the curated filler above is occasionally used
-    # deliberately, so penalizing it would punish fair usage. compute_scores
-    # leaves this out of language_score on purpose.
+    # Advisory only — no score. Even curated filler is sometimes used
+    # deliberately, so compute_scores leaves this out of language_score.
     return {
         "available": True,
         "advisory": True,
@@ -892,10 +842,9 @@ def analyze_buzzwords(text: str) -> dict:
 def _apply_buzzword_review(bz: dict, review: dict | None) -> dict:
     """Drop buzzwords the content LLM judged appropriate in context.
 
-    `review` maps each flagged word -> True (used as precise, legitimate
-    vocabulary here — suppress it) or False (genuine filler — keep flagging).
-    Only the content call produces it; with no review (LLM unavailable) the
-    deterministic flags are returned unchanged, so the feature stays offline-safe.
+    `review` maps each flagged word -> True (legitimate here — suppress) or False
+    (genuine filler — keep). With no review (LLM unavailable) the deterministic
+    flags are returned unchanged, so the feature stays offline-safe.
     """
     if not review:
         return bz
@@ -913,8 +862,7 @@ def _apply_buzzword_review(bz: dict, review: dict | None) -> dict:
     old_total = bz.get("total") or 0
     new_total = sum(by_word.values())
     old_density = bz.get("density_per_100w") or 0
-    # density = total / word_count * 100, so scaling by the surviving-total ratio
-    # gives the exact new density without re-tokenizing.
+    # Scale by the surviving-total ratio to get the new density without re-tokenizing.
     new_density = _round(old_density * new_total / old_total, 2) if old_total else 0
     return {
         **bz,
@@ -950,9 +898,8 @@ def analyze_repetition(text: str, words: list) -> dict:
         f"{a} {b}": c for (a, b), c in bigrams.most_common(8) if c >= 3
     }
 
-    # Vocabulary concentration: if one word dominates the talk (e.g. saying
-    # "yeah" over and over), that's low-substance and should be punished hard.
-    # Counting distinct repeated words barely moved the score before.
+    # Vocabulary concentration: one word dominating the talk (e.g. "yeah" over
+    # and over) is low-substance and penalized hard.
     total = len(tokens)
     top_share = (word_freq.most_common(1)[0][1] / total) if total else 0.0
     concentration_penalty = max(0.0, top_share - 0.15) * 200  # >15% share hurts
@@ -1011,10 +958,9 @@ def analyze_content(text: str, transitions: dict,
                     flagged_buzzwords: list | None = None) -> dict:
     """Evaluate intro, thesis, evidence, organization, conclusion.
 
-    Uses the local LLM (Ollama/Llama 3.1) and falls back to a transparent
-    heuristic if Ollama isn't reachable, so the app stays fully functional.
-    `flagged_buzzwords` (if any) are vetted in the same call — see
-    _content_via_llm — and the verdict is returned under "buzzword_review".
+    Uses the local LLM, falling back to a heuristic if Ollama isn't reachable.
+    `flagged_buzzwords` (if any) are vetted in the same call and returned under
+    "buzzword_review".
     """
     try:
         return _content_via_llm(text, flagged_buzzwords)
@@ -1057,10 +1003,9 @@ def _content_via_llm(text: str, flagged_buzzwords: list | None = None) -> dict:
         "well-developed. If a whole section (e.g. a conclusion) is absent, score "
         "it 0-15. Give concise, actionable feedback that names what is missing."
     )
-    # Fold an optional buzzword context-check into the SAME call (no extra
-    # latency): decide which flagged terms are precise, legitimate vocabulary in
-    # THIS talk vs empty filler, so the deterministic matcher's false positives
-    # (e.g. "robust" in a stats talk) can be suppressed downstream.
+    # Fold the buzzword context-check into the same call (no extra latency):
+    # decide which flagged terms are legitimate vocabulary here vs filler, so the
+    # matcher's false positives can be suppressed downstream.
     words = sorted({w for w in (flagged_buzzwords or []) if w})
     if words:
         instructions += (
@@ -1074,11 +1019,8 @@ def _content_via_llm(text: str, flagged_buzzwords: list | None = None) -> dict:
         instructions + "\n\nReturn ONLY valid JSON with no markdown: " +
         schema + "\n\nTRANSCRIPT:\n" + text[:12000]
     )
-    # Call the local Ollama server directly over its native HTTP API. format=json
-    # makes Ollama return guaranteed-valid JSON, so no fence-stripping is needed.
-    # temperature 0 + a fixed seed make the model decode greedily, so the same
-    # transcript yields the same scores/feedback on repeated runs (as close to
-    # deterministic as the local runtime allows).
+    # format=json guarantees valid JSON (no fence-stripping). temperature 0 +
+    # fixed seed make decoding deterministic across runs.
     payload = json.dumps({
         "model": LLM_MODEL,
         "messages": [{"role": "user", "content": prompt}],
@@ -1107,7 +1049,6 @@ def _content_via_llm(text: str, flagged_buzzwords: list | None = None) -> dict:
     }
     review = data.get("buzzword_review")
     if words and isinstance(review, dict):
-        # Normalize to {lowercased word: bool} for _apply_buzzword_review.
         result["buzzword_review"] = {str(k).lower(): bool(v) for k, v in review.items()}
     return result
 
@@ -1342,13 +1283,11 @@ def _too_short_msg(seconds: float) -> str:
 def run_analysis(audio_path: str) -> dict:
     warnings = []
 
-    # Fail fast with a clear message if ffmpeg is missing, rather than letting
-    # the subprocess raise an opaque FileNotFoundError mid-transcription.
+    # Fail fast if ffmpeg is missing rather than raising an opaque error mid-transcription.
     if shutil.which("ffmpeg") is None:
         return {"error": FFMPEG_MISSING_MSG}
 
-    # Reject too-short clips up front (cheap probe, before transcription) so a
-    # 2-second "Hi I'm X" can't be analyzed.
+    # Reject too-short clips up front (cheap probe, before transcription).
     probe = probe_duration(audio_path)
     if probe is not None and probe < MIN_DURATION_SEC:
         return {"error": _too_short_msg(probe)}
@@ -1358,8 +1297,7 @@ def run_analysis(audio_path: str) -> dict:
     if not text:
         return {"error": "Transcription produced no text. Is there speech in the audio?"}
 
-    # Fallback length check when the probe couldn't read the format: use the
-    # transcript's own end time.
+    # Fallback length check when the probe couldn't read the format.
     if probe is None and duration and duration < MIN_DURATION_SEC:
         return {"error": _too_short_msg(duration)}
 
@@ -1369,16 +1307,13 @@ def run_analysis(audio_path: str) -> dict:
 
     # Cheap text analyzers first (the LLM call below depends on them).
     transitions = analyze_transitions(text)
-    # Buzzwords are flagged deterministically, then handed to the content LLM
-    # call, which vets them for context; its verdict feeds back to suppress
-    # false positives.
+    # Flagged deterministically, then vetted by the content LLM call below.
     buzzwords = analyze_buzzwords(text)
     flagged = list((buzzwords.get("by_word") or {}).keys())
 
-    # Run the LLM content analysis (network/Ollama latency) concurrently with the
-    # CPU-heavy audio feature extraction (pitch/volume). Both release the GIL
-    # during their slow work, so this overlaps instead of adding up — typically
-    # the single biggest speedup for total analysis time.
+    # Run the LLM content analysis (Ollama latency) concurrently with the
+    # CPU-heavy audio extraction; both release the GIL, so the work overlaps —
+    # typically the biggest speedup for total analysis time.
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
         content_future = ex.submit(analyze_content, text, transitions, flagged)
         delivery = {
@@ -1424,10 +1359,8 @@ def run_analysis(audio_path: str) -> dict:
 # ---------------------------------------------------------------------------
 # Module 6 — User accounts, sessions & leaderboard (MongoDB)
 # ---------------------------------------------------------------------------
-#
-# Optional, like the other heavy features. If pymongo isn't installed or the
-# MongoDB server isn't reachable, the account/leaderboard endpoints return a
-# clear "unavailable" message and the core analysis flow keeps working.
+# Optional. If pymongo or the MongoDB server is unavailable, the account/
+# leaderboard endpoints return an "unavailable" message and core analysis works.
 
 _mongo_lock = threading.Lock()
 _mongo_client = None
@@ -1464,19 +1397,17 @@ def get_db():
     return db
 
 
-# Cache the ping result briefly so /health and /api/me (hit on every page load)
-# don't pay a network round trip — or, when the DB is down, a multi-second
-# timeout — on every single request.
+# Cache the ping briefly so /health and /api/me don't pay a round trip (or, when
+# the DB is down, a multi-second timeout) on every request.
 _DB_STATUS_TTL = 5.0  # seconds
 _db_status = {"ok": False, "checked_at": 0.0}
 
 
 def db_available() -> bool:
-    """True only if MongoDB actually responds to a ping (cached for a few seconds).
+    """True only if MongoDB responds to a ping (cached for a few seconds).
 
-    Never raises — any failure (no pymongo, bad URI, server unreachable, auth
-    error) is reported as simply "not available" so callers like /health stay
-    200 instead of 500.
+    Never raises — any failure is reported as "not available" so callers like
+    /health stay 200 instead of 500.
     """
     now = time.monotonic()
     if now - _db_status["checked_at"] < _DB_STATUS_TTL:
@@ -1495,9 +1426,8 @@ def db_available() -> bool:
 
 
 def _user_by_id(uid):
-    """Load a user document by id string, or None. Unlike current_user() this
-    needs no request context, so background analysis jobs can use it to attribute
-    a result to the user who submitted it (captured at submit time)."""
+    """Load a user document by id string, or None. Needs no request context (unlike
+    current_user()), so background jobs can use it to attribute a result."""
     if not uid:
         return None
     db = get_db()
@@ -1537,11 +1467,8 @@ def login_required(fn):
 def _record_result(result: dict, user_id=None):
     """Persist a completed analysis to the leaderboard for the given user.
 
-    `user_id` is captured at request time and passed in explicitly, because the
-    analysis runs in a background thread that has no Flask session to read.
-
-    Returns the saved overall score, or None if not saved (anonymous user,
-    DB unavailable, or no score).
+    `user_id` is passed in explicitly because the background thread has no Flask
+    session. Returns the saved overall score, or None if not saved.
     """
     user = _user_by_id(user_id)
     if not user:
@@ -1576,27 +1503,22 @@ def _record_result(result: dict, user_id=None):
 # ---------------------------------------------------------------------------
 # Module 7 — Ideal-delivery playback (script rewrite + ElevenLabs TTS)
 # ---------------------------------------------------------------------------
-#
-# "Hear how it could sound": rewrite the transcript into a tighter spoken script
-# (local LLM, with a filler-stripping heuristic fallback), then synthesize it as
-# audio with ElevenLabs. Optional and opt-in — gated on ELEVENLABS_API_KEY — and
-# the only feature that sends text off the machine, so it runs solely when the
-# user explicitly asks for it (see /api/ideal-delivery), never during /analyze.
+# "Hear how it could sound": rewrite the transcript into a tighter script (local
+# LLM, heuristic fallback), then synthesize it with ElevenLabs. Opt-in (gated on
+# ELEVENLABS_API_KEY) and the only feature that sends text off-machine, so it runs
+# only on an explicit request, never during /analyze.
 
-# Vocalized pauses only — unambiguous disfluencies that are always safe to drop.
-# The broader FILLER_WORDS list (so, like, well, right…) is deliberately NOT used
-# here: those double as real words, so blind removal would mangle the sentence.
-# The LLM rewrite handles them in context; this heuristic is just the offline net.
+# Vocalized pauses only — always safe to drop. The discourse markers (so, like,
+# well…) are excluded since they double as real words; the LLM rewrite handles
+# those in context, this heuristic is just the offline net.
 _HEURISTIC_FILLERS = {"um", "uh", "uhm", "er", "ah", "hmm", "mm", "mhm"}
 
 
 _resolved_voice_id = None
 
-# Cache successful rewrite+synthesis results by transcript content, so repeated
-# clicks of "hear how it could sound" on the same transcript (rehearsal + the
-# live demo) don't re-spend ElevenLabs credits or re-incur latency. In-memory
-# only — lost on restart, which is fine. Only fully successful syntheses are
-# cached (see api_ideal_delivery), so a transient API failure is never stuck.
+# Cache successful rewrite+synthesis by transcript content so repeated clicks on
+# the same transcript don't re-spend credits. In-memory; only fully successful
+# syntheses are cached, so a transient failure isn't stuck.
 _ideal_cache: dict = {}
 _ideal_cache_lock = threading.Lock()
 
@@ -1607,11 +1529,10 @@ def elevenlabs_available() -> bool:
 
 
 def list_voices() -> list:
-    """Return the voices available to the configured ElevenLabs account.
+    """Return the account's voices as {voice_id, name, category}.
 
-    Each entry is {voice_id, name, category}. `category` is "premade"/"famous"
-    for the shared library voices (blocked on the free API tier) versus
-    "cloned"/"generated"/"professional" for voices you own.
+    `category` is "premade"/"famous" for shared library voices (blocked on the
+    free tier) vs "cloned"/"generated"/"professional" for voices you own.
     """
     import urllib.request
     if not elevenlabs_available():
@@ -1629,10 +1550,8 @@ def list_voices() -> list:
 def _resolve_voice_id() -> str:
     """Pick the voice to synthesize with.
 
-    An explicit ELEVENLABS_VOICE_ID always wins. Otherwise auto-pick from the
-    account, preferring the user's OWN voices (cloned/generated/professional),
-    because the free API tier rejects the shared library/premade voices (402).
-    The choice is cached so we don't re-list voices on every request.
+    An explicit ELEVENLABS_VOICE_ID wins. Otherwise auto-pick, preferring voices
+    you own (the free tier rejects shared library voices with 402). Cached.
     """
     global _resolved_voice_id
     if ELEVENLABS_VOICE_ID:
@@ -1654,11 +1573,10 @@ def _resolve_voice_id() -> str:
 def _strip_fillers_heuristic(text: str) -> str:
     """Offline fallback rewrite: drop vocalized fillers and tidy whitespace.
 
-    Used when the LLM is unreachable so the feature still produces a cleaner
-    script. Conservative on purpose — only removes clear disfluencies.
+    Used when the LLM is unreachable. Conservative — only clear disfluencies.
     """
     cleaned = text
-    for phrase in FILLER_PHRASES:  # "you know", "i mean", "sort of", "kind of"
+    for phrase in FILLER_PHRASES:
         cleaned = re.sub(r"\b" + re.escape(phrase) + r"\b", "", cleaned, flags=re.I)
     filler_re = re.compile(
         r"\b(" + "|".join(re.escape(w) for w in sorted(_HEURISTIC_FILLERS)) + r")\b",
@@ -1674,9 +1592,8 @@ def _strip_fillers_heuristic(text: str) -> str:
 def improve_script(text: str) -> dict:
     """Rewrite the transcript into a polished spoken script.
 
-    Returns {script, method[, llm_error]}. Tries the local LLM (Ollama) for a
-    real rewrite; if that's unavailable, falls back to stripping vocalized
-    fillers so the feature still produces something usable offline.
+    Returns {script, method[, llm_error]}. Tries the local LLM; falls back to
+    stripping vocalized fillers so it still works offline.
     """
     text = (text or "").strip()
     if not text:
@@ -1743,8 +1660,7 @@ def synthesize_speech(text: str) -> bytes:
     payload = json.dumps({
         "text": text,
         "model_id": ELEVENLABS_MODEL,
-        # Expressive but stable — models the varied, well-paced delivery the app
-        # coaches users toward, without drifting off-script into a flat read.
+        # Expressive but stable — the varied, well-paced delivery the app coaches toward.
         "voice_settings": {
             "stability": 0.45,
             "similarity_boost": 0.75,
@@ -1792,12 +1708,10 @@ def health():
         "llm": "ollama (local)",
         "llm_model": LLM_MODEL,
         "ollama_host": OLLAMA_HOST,
-        # ffmpeg is required to decode audio; this tells you if the running
-        # server process can actually find it on PATH.
+        # Whether the server process can find ffmpeg (required to decode audio).
         "ffmpeg_found": bool(shutil.which("ffmpeg")),
         "db_available": db_available(),
         "min_recording_sec": MIN_DURATION_SEC,
-        # Optional "hear how it could sound" playback (ElevenLabs TTS).
         "elevenlabs_available": elevenlabs_available(),
         "elevenlabs_voice_id": (ELEVENLABS_VOICE_ID or "auto") if elevenlabs_available() else None,
     })
@@ -1826,11 +1740,9 @@ def api_register():
         "password_hash": generate_password_hash(password),
         "created_at": datetime.datetime.now(datetime.timezone.utc),
     }
-    # Only store email when provided. Storing an explicit null would collide on
-    # the unique (sparse) email index for every email-less account after the
-    # first — a sparse index still indexes present-but-null fields. Omitting the
-    # field keeps it out of the index, so unlimited accounts without an email
-    # work while real emails stay unique.
+    # Omit email when absent rather than storing null: a sparse index still indexes
+    # present-but-null fields, so an explicit null would collide across email-less
+    # accounts. Omitting keeps them out of the unique index.
     if email:
         doc["email"] = email
     try:
@@ -1915,20 +1827,15 @@ def api_leaderboard():
 
 @app.route("/api/ideal-delivery", methods=["POST"])
 def api_ideal_delivery():
-    """Rewrite a transcript into a tighter script and, if ElevenLabs is
-    configured, synthesize it to audio — the "hear how it could sound" feature.
-
-    Generated on demand (not during /analyze): synthesis costs ElevenLabs credits
-    and sends text to their API, so doing it only on an explicit click keeps the
-    default analysis flow fully local.
-    """
+    """Rewrite a transcript into a tighter script and, if ElevenLabs is configured,
+    synthesize it to audio. On demand only (not during /analyze) since synthesis
+    costs credits and sends text off-machine."""
     data = request.get_json(silent=True) or {}
     transcript = (data.get("transcript") or "").strip()
     if not transcript:
         return jsonify({"error": "No transcript provided."}), 400
 
-    # Serve an identical transcript from cache (same text the rewrite+synthesis
-    # was already produced for) to avoid re-spending ElevenLabs credits/latency.
+    # Serve an identical transcript from cache to avoid re-spending credits.
     trimmed = transcript[:IDEAL_DELIVERY_MAX_CHARS]
     cache_key = hashlib.sha256(trimmed.encode("utf-8")).hexdigest()
     with _ideal_cache_lock:
@@ -1945,20 +1852,19 @@ def api_ideal_delivery():
         "audio": None,
     }
     if not elevenlabs_available():
-        # Defensive — the UI hides the card when unavailable, but if the endpoint
-        # is hit directly, return the rewrite and say how to enable audio.
+        # The UI hides the card, but if the endpoint is hit directly return the
+        # rewrite and say how to enable audio.
         result["note"] = "Set ELEVENLABS_API_KEY to also hear this script read aloud."
         return jsonify(result)
     try:
         import base64
         audio = synthesize_speech(script)
         result["audio"] = "data:audio/mpeg;base64," + base64.b64encode(audio).decode("ascii")
-        result["voice_id"] = _resolve_voice_id()  # cached — reports which voice was used
+        result["voice_id"] = _resolve_voice_id()  # cached
     except Exception as exc:
         # Keep the rewritten script even if synthesis fails (bad key, quota, etc.).
         result["audio_error"] = str(exc)
-    # Cache only a fully successful synthesis — never a result that errored, so a
-    # transient failure (quota, network) isn't served forever from cache.
+    # Cache only a fully successful synthesis, so a transient failure isn't stuck.
     if result.get("audio") and not result.get("audio_error"):
         with _ideal_cache_lock:
             _ideal_cache[cache_key] = result
@@ -1967,8 +1873,7 @@ def api_ideal_delivery():
 
 @app.route("/api/voices")
 def api_voices():
-    """List the ElevenLabs voices available to the configured account, so you can
-    pick one for ELEVENLABS_VOICE_ID (free tier: use a voice you own)."""
+    """List the account's ElevenLabs voices to pick one for ELEVENLABS_VOICE_ID."""
     if not elevenlabs_available():
         return jsonify({
             "error": "ElevenLabs is not configured (set ELEVENLABS_API_KEY).",
@@ -1983,14 +1888,11 @@ def api_voices():
 # ---------------------------------------------------------------------------
 # Background analysis jobs
 # ---------------------------------------------------------------------------
-#
-# Analysis takes a long time (cold model load + transcription can run for
-# minutes). Holding a single HTTP request open that whole time is unreliable:
-# browsers, proxies, and OS network stacks drop stalled connections, which the
-# frontend then reports as a "network error" even though the server finishes and
-# logs a 200. So /analyze hands the work to a background thread and returns a job
-# id immediately; the client polls /analyze/status/<id> with short requests that
-# never stay open long enough to drop.
+# Analysis can run for minutes (cold model load + transcription). Holding one
+# HTTP request open that long is unreliable — browsers/proxies drop stalled
+# connections, which the frontend reports as a "network error" even on success.
+# So /analyze returns a job id immediately and the client polls
+# /analyze/status/<id> with short requests.
 
 _analysis_jobs: dict = {}            # job_id -> {state, result?/error?, done_at}
 _analysis_jobs_lock = threading.Lock()
@@ -2001,11 +1903,9 @@ _analysis_pool = concurrent.futures.ThreadPoolExecutor(
 # Keep finished jobs around briefly so a dropped status poll can be retried.
 JOB_RETENTION_SEC = int(os.environ.get("JOB_RETENTION_SEC", "900"))
 
-# Cache completed analyses by audio file content, so re-uploading the same file
-# (e.g. replaying your prepared demo clip) returns instantly instead of re-running
-# minutes of transcription + LLM + audio analysis. Safe because the analysis is
-# deterministic (LLM_SEED=0, temperature 0): a cached result is identical to a
-# fresh one. In-memory only — lost on restart, which is fine for a demo.
+# Cache completed analyses by file content so re-uploading the same file returns
+# instantly. Safe because analysis is deterministic (LLM_SEED=0, temperature 0).
+# In-memory only.
 _upload_cache: dict = {}             # sha256(file bytes) -> analysis result dict
 _upload_cache_lock = threading.Lock()
 
@@ -2032,13 +1932,11 @@ def _run_analysis_job(job_id: str, audio_path: str, user_id, file_hash=None):
     try:
         result = run_analysis(audio_path)
         if "error" not in result:
-            # Cache the successful analysis by file content (before adding the
-            # per-user leaderboard flag), so an identical re-upload is served
-            # instantly and each cache hit still records freshly for its user.
+            # Cache before adding the per-user leaderboard flag, so each cache hit
+            # still records freshly for its own user.
             if file_hash:
                 with _upload_cache_lock:
                     _upload_cache[file_hash] = dict(result)
-            # Logged-in users automatically get their score on the leaderboard.
             saved = _record_result(result, user_id=user_id)
             result["saved_to_leaderboard"] = saved is not None
         outcome = {"state": "done", "result": result}
@@ -2087,9 +1985,8 @@ def analyze():
     _prune_jobs()
     job_id = uuid.uuid4().hex
 
-    # If we've already analyzed this exact file, return the cached result as an
-    # immediately-done job — but still record it for whoever is logged in now, so
-    # the leaderboard updates exactly as a fresh run would.
+    # Already analyzed this exact file: return the cached result as an
+    # immediately-done job, but still record it for whoever is logged in now.
     file_hash = _hash_file(tmp.name)
     with _upload_cache_lock:
         cached = _upload_cache.get(file_hash)
@@ -2117,8 +2014,7 @@ def analyze():
 
 @app.route("/analyze/status/<job_id>")
 def analyze_status(job_id):
-    """Report on a background analysis job. The client polls this until it's
-    'done' (full result attached) or 'error'."""
+    """Report on a background analysis job; polled until 'done' or 'error'."""
     with _analysis_jobs_lock:
         job = _analysis_jobs.get(job_id)
         snapshot = dict(job) if job else None
@@ -2135,8 +2031,7 @@ def analyze_status(job_id):
     return jsonify({"state": "processing"}), 200
 
 
-# Always return JSON (not Flask's HTML error pages) so the frontend's
-# `await resp.json()` never chokes on an oversized upload or server error.
+# Return JSON (not Flask's HTML error pages) so the frontend's resp.json() never chokes.
 @app.errorhandler(413)
 def _too_large(_e):
     mb = app.config["MAX_CONTENT_LENGTH"] // (1024 * 1024)
