@@ -485,7 +485,7 @@
         audio.src = d.audio;
         audio.classList.remove("hidden");
         $("idealStatus").textContent = fromHeuristic
-          ? " Ready — script cleaned without the LLM (start Ollama for a fuller rewrite)."
+          ? " Ready — script cleaned without the LLM (set GEMINI_API_KEY for a fuller rewrite)."
           : " Ready — press play.";
       } else {
         audio.classList.add("hidden");

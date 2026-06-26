@@ -155,7 +155,7 @@ hide**, never to show a broken control. There are exactly three:
 |---|---|---|---|
 | Accounts + leaderboard | MongoDB | `db_available` in `/api/me` & `/health`; `error` in `/api/leaderboard` | Hide auth bar sign-in + the whole leaderboard card |
 | "Hear how it could sound" | ElevenLabs API key | `ideal_delivery_available` in the result + `elevenlabs_available` in `/health` | Hide the ideal-delivery card entirely |
-| Richer content feedback / script rewrite | Ollama (local LLM) | `content.method` = `"heuristic …"` | Still show everything; just surface the "heuristic" method label |
+| Richer content feedback / script rewrite | Gemini API key | `content.method` = `"heuristic …"` | Still show everything; just surface the "heuristic" method label |
 
 This is why the UI calls `/health`, `/api/me`, and `/api/leaderboard` on load —
 to learn which features to reveal. **Assume nothing is available until the server

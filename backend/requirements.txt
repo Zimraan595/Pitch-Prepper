@@ -24,13 +24,13 @@ pymongo[srv]>=4.6
 # app works the same whether launched from a shell, an IDE Run button, etc.
 python-dotenv>=1.0
 
-# LLM-based content/structure analysis runs on a LOCAL model via Ollama.
-# Install Ollama (https://ollama.com) and run: `ollama pull llama3.1`.
-# No Python package and no API key are required — the app calls Ollama's local
-# HTTP API directly using the standard library.
+# LLM-based content/structure analysis uses Google's Gemini API (free tier).
+# Get a key at https://aistudio.google.com/apikey and set GEMINI_API_KEY (see
+# .env.example). No Python package is required — the app calls Gemini's REST API
+# directly using the standard library.
 
 # NOTE:
 # - openai-whisper requires PyTorch (installed automatically as a dependency)
 #   and the `ffmpeg` system binary must be available on PATH.
-# - If Ollama isn't running, content analysis falls back to a built-in
-#   heuristic so the app still runs fully offline.
+# - If GEMINI_API_KEY is unset or the API is unreachable, content analysis falls
+#   back to a built-in heuristic so the app still runs fully offline.

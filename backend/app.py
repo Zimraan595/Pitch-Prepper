@@ -6,9 +6,10 @@ buzzwords, repetition, keywords) and content/structure (LLM or heuristic
 fallback), then return a scored dashboard with visualization data.
 
 Each analyzer is an independent function returning a JSON-serializable dict.
-Heavy/optional deps (whisper, librosa, numpy, the local LLM) load lazily and
-degrade gracefully: if one is missing, that analyzer is skipped or falls back
-instead of failing the whole request.
+Heavy/optional deps (whisper, librosa, numpy) load lazily and degrade
+gracefully: if one is missing, that analyzer is skipped or falls back instead
+of failing the whole request. Content analysis calls Google's Gemini API and
+falls back to a heuristic when no key is set or the API is unreachable.
 
 Run: `pip install -r requirements.txt && python app.py`, open localhost:5000.
 """
@@ -65,18 +66,23 @@ WHISPERX_DEVICE = os.environ.get("WHISPERX_DEVICE", "auto")
 WHISPERX_COMPUTE_TYPE = os.environ.get("WHISPERX_COMPUTE_TYPE", "")
 WHISPERX_BATCH_SIZE = int(os.environ.get("WHISPERX_BATCH_SIZE", "16"))
 
-# Content analysis uses a local LLM via Ollama (on-device, no API key). Falls
-# back to a built-in heuristic if Ollama isn't running.
-LLM_MODEL = os.environ.get("LLM_MODEL", "llama3.1")
-OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+# Content analysis uses Google's Gemini API (free tier — get a key at
+# https://aistudio.google.com/apikey). Unlike the old on-device Ollama path this
+# sends transcript text to Google, so it's gated on a key: with no key set (or if
+# the API is unreachable) content analysis falls back to a built-in heuristic and
+# nothing leaves the machine. gemini-2.5-flash is fast and free-tier eligible.
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
+GEMINI_API_BASE = os.environ.get(
+    "GEMINI_API_BASE", "https://generativelanguage.googleapis.com"
+)
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 # Fixed seed + temperature 0 = deterministic decoding, so the same transcript
 # yields the same analysis across runs.
 LLM_SEED = int(os.environ.get("LLM_SEED", "0"))
-# The "ideal delivery" rewrite is text cleanup, not reasoning, so it uses a
-# smaller/faster model — the rewrite scales with transcript length and an 8B
-# model on CPU is too slow. Falls back to the filler-stripping heuristic if this
-# model isn't pulled (`ollama pull llama3.2:3b`).
-IDEAL_REWRITE_MODEL = os.environ.get("IDEAL_REWRITE_MODEL", "llama3.2:3b")
+# The "ideal delivery" rewrite is text cleanup, not reasoning. Flash handles it
+# well and fast; configurable so it can point at a lighter/cheaper model. Falls
+# back to the filler-stripping heuristic if the API is unavailable.
+GEMINI_REWRITE_MODEL = os.environ.get("GEMINI_REWRITE_MODEL", "gemini-2.5-flash")
 
 # --- Ideal-delivery playback (ElevenLabs text-to-speech) -------------------
 # Optional, opt-in cloud feature: the only one that sends text off-machine, so
@@ -954,13 +960,71 @@ def analyze_rhythm(words: list, text: str) -> dict:
 CONTENT_CATEGORIES = ["introduction", "thesis", "evidence", "organization", "conclusion"]
 
 
+def _gemini_generate(model: str, prompt: str, *, temperature: float,
+                     seed: int | None = None, json_mode: bool = True,
+                     timeout: int = 180) -> str:
+    """Call the Gemini API and return the model's text output. Raises on failure.
+
+    Uses the REST endpoint via urllib so there's no SDK dependency (matching the
+    rest of the app's stdlib-only HTTP style). responseMimeType application/json
+    mirrors the old Ollama format=json so callers can json.loads the result
+    directly; a fixed seed + temperature 0 keep decoding deterministic.
+    """
+    import urllib.request
+    import urllib.error
+
+    if not GEMINI_API_KEY:
+        raise RuntimeError(
+            "GEMINI_API_KEY is not set. Get a free key at "
+            "https://aistudio.google.com/apikey and add it to backend/.env."
+        )
+    gen_config: dict = {"temperature": temperature, "topP": 1}
+    if seed is not None:
+        gen_config["seed"] = seed
+    if json_mode:
+        gen_config["responseMimeType"] = "application/json"
+    payload = json.dumps({
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": gen_config,
+    }).encode("utf-8")
+    url = GEMINI_API_BASE.rstrip("/") + "/v1beta/models/" + model + ":generateContent"
+    req = urllib.request.Request(
+        url,
+        data=payload,
+        headers={
+            "Content-Type": "application/json",
+            "x-goog-api-key": GEMINI_API_KEY,
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        # Surface Gemini's error body (the default HTTPError str hides it), so the
+        # heuristic fallback can report the real cause — usually a bad/expired key
+        # (400/403), an unknown model name (404), or a rate limit (429).
+        detail = exc.read().decode("utf-8", "replace")[:500]
+        raise RuntimeError(f"Gemini API error {exc.code}: {detail}") from exc
+    candidates = body.get("candidates") or []
+    if not candidates:
+        # No candidates usually means a safety block or an empty response —
+        # surface promptFeedback so the heuristic fallback can report why.
+        feedback = body.get("promptFeedback") or {}
+        raise ValueError(f"Gemini returned no candidates ({feedback or 'empty response'})")
+    parts = (candidates[0].get("content") or {}).get("parts") or []
+    text = "".join(p.get("text", "") for p in parts).strip()
+    if not text:
+        raise ValueError("Gemini returned an empty response")
+    return text
+
+
 def analyze_content(text: str, transitions: dict,
                     flagged_buzzwords: list | None = None) -> dict:
     """Evaluate intro, thesis, evidence, organization, conclusion.
 
-    Uses the local LLM, falling back to a heuristic if Ollama isn't reachable.
-    `flagged_buzzwords` (if any) are vetted in the same call and returned under
-    "buzzword_review".
+    Uses the Gemini API, falling back to a heuristic if no key is set or the API
+    is unreachable. `flagged_buzzwords` (if any) are vetted in the same call and
+    returned under "buzzword_review".
     """
     try:
         return _content_via_llm(text, flagged_buzzwords)
@@ -972,8 +1036,6 @@ def analyze_content(text: str, transitions: dict,
 
 
 def _content_via_llm(text: str, flagged_buzzwords: list | None = None) -> dict:
-    import urllib.request
-
     schema = (
         "{\"categories\": {"
         "\"introduction\": {\"score\": 0-100, \"feedback\": str}, "
@@ -1019,30 +1081,17 @@ def _content_via_llm(text: str, flagged_buzzwords: list | None = None) -> dict:
         instructions + "\n\nReturn ONLY valid JSON with no markdown: " +
         schema + "\n\nTRANSCRIPT:\n" + text[:12000]
     )
-    # format=json guarantees valid JSON (no fence-stripping). temperature 0 +
-    # fixed seed make decoding deterministic across runs.
-    payload = json.dumps({
-        "model": LLM_MODEL,
-        "messages": [{"role": "user", "content": prompt}],
-        "stream": False,
-        "format": "json",
-        "options": {"temperature": 0, "top_p": 1, "seed": LLM_SEED},
-    }).encode("utf-8")
-    req = urllib.request.Request(
-        OLLAMA_HOST.rstrip("/") + "/api/chat",
-        data=payload,
-        headers={"Content-Type": "application/json"},
-    )
-    with urllib.request.urlopen(req, timeout=180) as resp:
-        body = json.loads(resp.read().decode("utf-8"))
-    data = json.loads(body.get("message", {}).get("content", "") or "{}")
+    # responseMimeType=application/json guarantees valid JSON (no fence-stripping).
+    # temperature 0 + fixed seed make decoding deterministic across runs.
+    raw = _gemini_generate(GEMINI_MODEL, prompt, temperature=0, seed=LLM_SEED)
+    data = json.loads(raw or "{}")
     cats = data.get("categories", {})
     scores = [cats.get(c, {}).get("score", 0) for c in CONTENT_CATEGORIES]
     overall = statistics.mean([s for s in scores if isinstance(s, (int, float))] or [0])
     result = {
         "available": True,
         "method": "llm",
-        "model": LLM_MODEL,
+        "model": GEMINI_MODEL,
         "categories": cats,
         "summary": data.get("summary", ""),
         "score": _round(overall, 1),
@@ -1135,7 +1184,7 @@ def _content_heuristic(text: str, transitions: dict) -> dict:
         "method": "heuristic",
         "categories": cats,
         "summary": (f"Heuristic structural review of ~{word_count} words. "
-                    "Start Ollama (`ollama serve`) for richer LLM-based feedback."),
+                    "Set GEMINI_API_KEY for richer LLM-based feedback."),
         "score": _round(overall, 1),
     }
 
@@ -1311,8 +1360,8 @@ def run_analysis(audio_path: str) -> dict:
     buzzwords = analyze_buzzwords(text)
     flagged = list((buzzwords.get("by_word") or {}).keys())
 
-    # Run the LLM content analysis (Ollama latency) concurrently with the
-    # CPU-heavy audio extraction; both release the GIL, so the work overlaps —
+    # Run the LLM content analysis (Gemini API latency) concurrently with the
+    # CPU-heavy audio extraction; the network wait and the CPU work overlap —
     # typically the biggest speedup for total analysis time.
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
         content_future = ex.submit(analyze_content, text, transitions, flagged)
@@ -1503,10 +1552,9 @@ def _record_result(result: dict, user_id=None):
 # ---------------------------------------------------------------------------
 # Module 7 — Ideal-delivery playback (script rewrite + ElevenLabs TTS)
 # ---------------------------------------------------------------------------
-# "Hear how it could sound": rewrite the transcript into a tighter script (local
-# LLM, heuristic fallback), then synthesize it with ElevenLabs. Opt-in (gated on
-# ELEVENLABS_API_KEY) and the only feature that sends text off-machine, so it runs
-# only on an explicit request, never during /analyze.
+# "Hear how it could sound": rewrite the transcript into a tighter script (Gemini,
+# heuristic fallback), then synthesize it with ElevenLabs. Opt-in (gated on
+# ELEVENLABS_API_KEY) and runs only on an explicit request, never during /analyze.
 
 # Vocalized pauses only — always safe to drop. The discourse markers (so, like,
 # well…) are excluded since they double as real words; the LLM rewrite handles
@@ -1599,7 +1647,7 @@ def improve_script(text: str) -> dict:
     if not text:
         return {"script": "", "method": "none"}
     try:
-        return {"script": _improve_via_llm(text), "method": "llm", "model": IDEAL_REWRITE_MODEL}
+        return {"script": _improve_via_llm(text), "method": "llm", "model": GEMINI_REWRITE_MODEL}
     except Exception as exc:
         return {
             "script": _strip_fillers_heuristic(text),
@@ -1609,9 +1657,7 @@ def improve_script(text: str) -> dict:
 
 
 def _improve_via_llm(text: str) -> str:
-    """Ask the local Ollama model to rewrite the transcript. Raises on failure."""
-    import urllib.request
-
+    """Ask Gemini to rewrite the transcript. Raises on failure."""
     prompt = (
         "You are an expert speechwriter and presentation coach. Rewrite the "
         "following spoken-presentation transcript into a polished version of the "
@@ -1623,21 +1669,8 @@ def _improve_via_llm(text: str) -> str:
         "{\"script\": \"<the rewritten talk as plain text>\"}"
         "\n\nTRANSCRIPT:\n" + text[:12000]
     )
-    payload = json.dumps({
-        "model": IDEAL_REWRITE_MODEL,
-        "messages": [{"role": "user", "content": prompt}],
-        "stream": False,
-        "format": "json",
-        "options": {"temperature": 0.4},
-    }).encode("utf-8")
-    req = urllib.request.Request(
-        OLLAMA_HOST.rstrip("/") + "/api/chat",
-        data=payload,
-        headers={"Content-Type": "application/json"},
-    )
-    with urllib.request.urlopen(req, timeout=180) as resp:
-        body = json.loads(resp.read().decode("utf-8"))
-    data = json.loads(body.get("message", {}).get("content", "") or "{}")
+    raw = _gemini_generate(GEMINI_REWRITE_MODEL, prompt, temperature=0.4)
+    data = json.loads(raw or "{}")
     script = (data.get("script") or "").strip()
     if not script:
         raise ValueError("LLM returned an empty script")
@@ -1705,9 +1738,9 @@ def health():
         "status": "ok",
         "transcribe_backend": TRANSCRIBE_BACKEND,
         "whisper_model": WHISPER_MODEL,
-        "llm": "ollama (local)",
-        "llm_model": LLM_MODEL,
-        "ollama_host": OLLAMA_HOST,
+        "llm": "gemini (google)",
+        "llm_model": GEMINI_MODEL,
+        "llm_configured": bool(GEMINI_API_KEY),
         # Whether the server process can find ffmpeg (required to decode audio).
         "ffmpeg_found": bool(shutil.which("ffmpeg")),
         "db_available": db_available(),

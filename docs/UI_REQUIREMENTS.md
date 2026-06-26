@@ -32,7 +32,7 @@ backend (Section 9) and the **behaviors** (Sections 3–8).
   corresponding controls rather than show broken/erroring elements:
   1. **MongoDB** → accounts + leaderboard.
   2. **ElevenLabs API key** → "Hear how it could sound" audio.
-  3. **Ollama (local LLM)** → richer content feedback & script rewrite (the UI
+  3. **Gemini API key** → richer content feedback & script rewrite (the UI
      still works; it just shows a "heuristic" method label).
 
 ---
@@ -208,7 +208,7 @@ exists. Contents:
   - A **collapsible "Show the improved script"** revealing the rewritten text.
 - Behavior detail: if the response has `script` but no `audio` (e.g. synthesis
   failed or key issue), still show the script and surface `audio_error`/`note`.
-  If `method` starts with "heuristic", note that Ollama wasn't used.
+  If `method` starts with "heuristic", note that the Gemini API wasn't used.
 - Must **reset** (clear audio, script, status; re-enable button) whenever a new
   analysis is rendered.
 
@@ -374,8 +374,8 @@ long request:
 - Empty improvements list → "None — nice work.".
 - Empty strengths → backend already substitutes a default; render as given.
 - Empty/blank chart data → blank chart.
-- Heuristic content method (Ollama down) → still render scores + feedback, with
-  the method label visible.
+- Heuristic content method (no Gemini key / API down) → still render scores +
+  feedback, with the method label visible.
 - DB down → no auth UI, no leaderboard, core analysis still fully usable.
 - ElevenLabs absent → no Ideal Delivery card at all.
 
@@ -403,9 +403,9 @@ Returns runtime/config status. UI reads at least `min_recording_sec`.
   "status": "ok",
   "transcribe_backend": "whisperx",
   "whisper_model": "base",
-  "llm": "ollama (local)",
-  "llm_model": "llama3.1",
-  "ollama_host": "http://localhost:11434",
+  "llm": "gemini (google)",
+  "llm_model": "gemini-2.5-flash",
+  "llm_configured": true,
   "ffmpeg_found": true,
   "db_available": true,
   "min_recording_sec": 15,
@@ -476,7 +476,7 @@ Returns runtime/config status. UI reads at least `min_recording_sec`.
   },
   "content": {
     "available": true, "method": "llm|heuristic|heuristic (LLM unavailable)",
-    "model": "llama3.1",
+    "model": "gemini-2.5-flash",
     "categories": {
       "introduction": {"score":0,"feedback":"..."},
       "thesis":       {"score":0,"feedback":"..."},
